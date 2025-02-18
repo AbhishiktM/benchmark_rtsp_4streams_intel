@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Start DL Streamer container (Detached Mode)
+      - name: Start DL Streamer container (Keep Alive)
         run: |
           docker run -d --rm \
             --name dlstreamer \
@@ -24,21 +24,34 @@ jobs:
             -v ${{ github.workspace }}/models:/home/dlstreamer/models \
             -v ${{ github.workspace }}/output:/mnt/data \
             --env MODELS_PATH=/home/dlstreamer/models \
-            intel/dlstreamer:latest
+            intel/dlstreamer:latest bash -c "tail -f /dev/null"
+
+      - name: Wait for DL Streamer to Start
+        run: |
+          echo "Waiting for DL Streamer container to become ready..."
+          for i in {1..10}; do
+            STATUS=$(docker inspect -f '{{.State.Running}}' dlstreamer 2>/dev/null || echo "not_found")
+            if [ "$STATUS" == "true" ]; then
+              echo "DL Streamer is fully started!"
+              break
+            elif [ "$STATUS" == "not_found" ]; then
+              echo "DL Streamer container not found! Retrying..."
+            else
+              echo "DL Streamer is still starting..."
+            fi
+            sleep 3
+          done
+          
+          if [ "$STATUS" != "true" ]; then
+            echo "Error: DL Streamer did not start properly!"
+            docker ps -a
+            exit 1
+          fi
 
       - name: Debug - Check Running Containers
         run: |
           echo "Checking running containers..."
           docker ps -a  # Print container status
-
-      - name: Ensure DL Streamer is Running
-        run: |
-          if ! docker ps --format '{{.Names}}' | grep -q '^dlstreamer$'; then
-            echo "Error: DL Streamer container is NOT running!"
-            docker ps -a  # Show all containers
-            exit 1
-          fi
-          echo "DL Streamer is running successfully!"
 
       - name: Install Dependencies in DL Streamer Container
         run: |
