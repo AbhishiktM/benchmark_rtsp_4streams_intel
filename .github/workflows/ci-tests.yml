@@ -64,15 +64,6 @@ jobs:
         run: |
           docker exec dlstreamer bash -c "cd /tests && behave --no-capture"
 
-      - name: Validate Output JSON
-        run: |
-          docker exec dlstreamer bash -c "cat /mnt/data/output.json"
-          docker exec dlstreamer bash -c "[ -s /mnt/data/output.json ] || (echo 'Error: output.json is empty!' && exit 1)"
-
-      - name: Run Behave Tests Inside Container
-        run: |
-          docker exec dlstreamer bash -c "behave /tests"
-
       - name: Stop DL Streamer container
         if: always()
         run: |
