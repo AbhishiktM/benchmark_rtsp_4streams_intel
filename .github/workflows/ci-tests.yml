@@ -14,9 +14,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Start DL Streamer container (Interactive Mode)
+      - name: Start DL Streamer container (Detached Mode)
         run: |
-          docker run -it --rm \
+          docker run -d --rm \
             --name dlstreamer \
             -p 8000:8000 \
             -v ${{ github.workspace }}/tests:/tests \
@@ -24,8 +24,8 @@ jobs:
             -v ${{ github.workspace }}/models:/home/dlstreamer/models \
             -v ${{ github.workspace }}/output:/mnt/data \
             --env MODELS_PATH=/home/dlstreamer/models \
-            intel/dlstreamer:latest &
-        
+            intel/dlstreamer:latest
+
       - name: Debug - Check Running Containers
         run: |
           echo "Checking running containers..."
