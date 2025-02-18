@@ -9,7 +9,8 @@ DEVICE = "CPU"
 INPUT_VIDEO = "/videos/person-bicycle-car-detection.mp4"
 OUTPUT_TYPE = "json"
 OUTPUT_JSON_PATH = "/mnt/data/output.json"
-YOLO_SCRIPT_PATH = "/opt/intel/dlstreamer/samples/gstreamer/gst_launch/detection_with_yolo/yolo_detect.sh"  # Fixed path
+YOLO_SCRIPT_PATH = "/opt/intel/dlstreamer/samples/gstreamer/gst_launch/detection_with_yolo/yolo_detect.sh"  
+MODEL_PATH_ENV = None  # This will be assigned dynamically
 
 @given("the DL Streamer pipeline is running")
 def step_impl_pipeline_running(context):
@@ -25,10 +26,25 @@ def step_impl_submit_video(context):
     Run object detection inside the DL Streamer container and wait for completion.
     """
 
+    # Step 1: Find the Models Folder
+    print("\n🔎 Searching for `models` directory inside the container...")
+    result = subprocess.run(["find", "/", "-type", "d", "-name", "models", "2>/dev/null"], capture_output=True, text=True)
+
+    global MODEL_PATH_ENV
+    MODEL_PATH_ENV = result.stdout.strip()  # Get the first found path
+
+    if not MODEL_PATH_ENV:
+        print("🚨 `models` directory not found in the container!")
+        subprocess.run(["find", "/", "-type", "d", "-name", "models"], check=False)  # Debug: Full search output
+        assert False, "🚨 Models folder is missing. Please check the container!"
+
+    print(f"✅ Found Models folder at: {MODEL_PATH_ENV}")
+    os.environ["MODEL_PATH"] = MODEL_PATH_ENV  # Assign to environment variable
+
     # Debug: Print actual file locations
     print("\n🔎 Checking essential paths inside container:")
     
-    for path in [YOLO_SCRIPT_PATH, INPUT_VIDEO, OUTPUT_JSON_PATH]:
+    for path in [YOLO_SCRIPT_PATH, INPUT_VIDEO, OUTPUT_JSON_PATH, MODEL_PATH_ENV]:
         exists = os.path.exists(path)
         print(f"Path: {path} | Exists: {exists}")
 
@@ -43,7 +59,7 @@ def step_impl_submit_video(context):
     print("\n🚀 Starting YOLO detection... Waiting for it to complete.")
     
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ
     )
 
     # Print YOLO script output in real-time
