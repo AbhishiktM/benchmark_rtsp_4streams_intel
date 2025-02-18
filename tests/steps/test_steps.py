@@ -26,20 +26,28 @@ def step_impl_submit_video(context):
     Run object detection inside the DL Streamer container and wait for completion.
     """
 
-    # Step 1: Find the Models Folder
-    print("\n🔎 Searching for `models` directory inside the container...")
-    result = subprocess.run(["find", "/", "-type", "d", "-name", "models", "2>/dev/null"], capture_output=True, text=True)
-
+    # Step 1: Check for models folder manually
+    print("\n🔎 Checking for models directory inside the container...")
+    
     global MODEL_PATH_ENV
-    MODEL_PATH_ENV = result.stdout.strip()  # Get the first found path
+    possible_paths = ["/home/dlstreamer/models", "/opt/intel/dlstreamer/models"]
+
+    for path in possible_paths:
+        if os.path.exists(path):
+            MODEL_PATH_ENV = path
+            break
 
     if not MODEL_PATH_ENV:
-        print("🚨 `models` directory not found in the container!")
-        subprocess.run(["find", "/", "-type", "d", "-name", "models"], check=False)  # Debug: Full search output
+        print("🚨 Models folder not found in expected locations! Performing a full search...")
+        subprocess.run(["find", "/", "-type", "d", "-name", "models"], check=False)
         assert False, "🚨 Models folder is missing. Please check the container!"
 
     print(f"✅ Found Models folder at: {MODEL_PATH_ENV}")
     os.environ["MODEL_PATH"] = MODEL_PATH_ENV  # Assign to environment variable
+
+    # Step 2: List EVERYTHING inside the models directory
+    print("\n📂 Listing everything inside the models directory:")
+    subprocess.run(["ls", "-R", MODEL_PATH_ENV], check=False)
 
     # Debug: Print actual file locations
     print("\n🔎 Checking essential paths inside container:")
