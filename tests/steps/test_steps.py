@@ -24,24 +24,19 @@ def step_impl_submit_video(context):
     Run object detection inside the DL Streamer container.
     """
 
-    # Debug: Print actual file locations
-    print("\n🔎 Searching for files in container...")
+    # Debug: Full Container Search
+    print("\n🔎 Searching for `yolo_detect.sh` inside the container...")
+    subprocess.run(["find", "/", "-name", "yolo_detect.sh", "2>/dev/null"], check=False)
 
-    # Search for YOLO script
-    print("\n📂 Listing files in /home/dlstreamer/samples/gstreamer/")
-    subprocess.run(["ls", "-R", "/home/dlstreamer/samples/gstreamer/"], check=False)
-
-    # Search for input video
-    print("\n📂 Listing files in /videos/")
-    subprocess.run(["ls", "-R", "/videos/"], check=False)
-
-    # Search for output folder
-    print("\n📂 Listing files in /mnt/data/")
-    subprocess.run(["ls", "-R", "/mnt/data/"], check=False)
+    # Debug: Print file locations
+    print("\n🔎 Checking essential paths inside container:")
+    
+    for path in [YOLO_SCRIPT_PATH, INPUT_VIDEO, OUTPUT_JSON_PATH]:
+        exists = os.path.exists(path)
+        print(f"Path: {path} | Exists: {exists}")
 
     # Ensure script exists before running
     assert os.path.exists(YOLO_SCRIPT_PATH), f"🚨 YOLO script not found at {YOLO_SCRIPT_PATH}"
-    assert os.path.exists(INPUT_VIDEO), f"🚨 Input video not found at {INPUT_VIDEO}"
 
     command = [
         YOLO_SCRIPT_PATH, MODEL, DEVICE, INPUT_VIDEO, OUTPUT_TYPE
