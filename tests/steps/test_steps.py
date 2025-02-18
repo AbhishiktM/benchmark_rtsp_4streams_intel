@@ -8,7 +8,7 @@ DEVICE = "CPU"
 INPUT_VIDEO = "/videos/person-bicycle-car-detection.mp4"
 OUTPUT_TYPE = "json"
 OUTPUT_JSON_PATH = "/mnt/data/output.json"
-YOLO_SCRIPT_PATH = "/home/dlstreamer/samples/gstreamer/gst_launch/detection_with_yolo/yolo_detect.sh"
+YOLO_SCRIPT_PATH = None  # Will be detected dynamically
 
 @given("the DL Streamer pipeline is running")
 def step_impl_pipeline_running(context):
@@ -24,9 +24,19 @@ def step_impl_submit_video(context):
     Run object detection inside the DL Streamer container.
     """
 
-    # Debug: Full Container Search
+    # Search for `yolo_detect.sh` dynamically
     print("\n🔎 Searching for `yolo_detect.sh` inside the container...")
-    subprocess.run(["find", "/", "-name", "yolo_detect.sh", "2>/dev/null"], check=False)
+    result = subprocess.run(["find", "/", "-name", "yolo_detect.sh", "2>/dev/null"], capture_output=True, text=True)
+
+    global YOLO_SCRIPT_PATH
+    YOLO_SCRIPT_PATH = result.stdout.strip()  # Get the first found path
+
+    if not YOLO_SCRIPT_PATH:
+        print("🚨 `yolo_detect.sh` not found in the container!")
+        subprocess.run(["find", "/", "-name", "yolo_detect.sh"], check=False)  # Debug: Full search output
+        assert False, "🚨 YOLO script is missing. Please check the container!"
+
+    print(f"✅ Found YOLO script at: {YOLO_SCRIPT_PATH}")
 
     # Debug: Print file locations
     print("\n🔎 Checking essential paths inside container:")
@@ -35,8 +45,9 @@ def step_impl_submit_video(context):
         exists = os.path.exists(path)
         print(f"Path: {path} | Exists: {exists}")
 
-    # Ensure script exists before running
+    # Ensure script and input video exist before running
     assert os.path.exists(YOLO_SCRIPT_PATH), f"🚨 YOLO script not found at {YOLO_SCRIPT_PATH}"
+    assert os.path.exists(INPUT_VIDEO), f"🚨 Input video not found at {INPUT_VIDEO}"
 
     command = [
         YOLO_SCRIPT_PATH, MODEL, DEVICE, INPUT_VIDEO, OUTPUT_TYPE
