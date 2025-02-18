@@ -1,0 +1,59 @@
+name: DL Streamer Pipeline Tests
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  behave-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Start DL Streamer container
+        run: |
+          docker run -d --rm --name dlstreamer -p 8000:8000 \
+            -v ${{ github.workspace }}/tests:/tests \
+            -v ${{ github.workspace }}/videos:/videos \
+            -v ${{ github.workspace }}/models:/models \
+            -v ${{ github.workspace }}/output:/mnt/data \
+            intel/dlstreamer:latest
+
+      - name: Wait for DL Streamer to be ready
+        run: |
+          for i in {1..10}; do
+            if curl -s http://localhost:8000/health; then
+              echo "DL Streamer is ready"
+              break
+            fi
+            echo "Waiting for DL Streamer..."
+            sleep 2
+          done
+
+          - name: Install Dependencies in DL Streamer Container
+          run: |
+            docker exec dlstreamer bash -c "apt update && apt install -y python3 python3-pip"
+            docker exec dlstreamer bash -c "python3 -m pip install --upgrade pip"
+            docker exec dlstreamer bash -c "pip3 install behave requests"
+  
+      - name: Run DL Streamer Pipeline
+        run: |
+          docker exec dlstreamer bash -c "python3 /tests/test_steps.py"
+
+      - name: Validate Output JSON
+        run: |
+          docker exec dlstreamer bash -c "cat /mnt/data/output.json"
+          docker exec dlstreamer bash -c "[ -s /mnt/data/output.json ] || (echo 'Error: output.json is empty!' && exit 1)"
+
+      - name: Run Behave Tests Inside Container
+        run: |
+          docker exec dlstreamer bash -c "behave /tests"
+
+      - name: Stop DL Streamer container
+        if: always()
+        run: |
+          docker stop dlstreamer
