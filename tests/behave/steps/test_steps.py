@@ -7,7 +7,7 @@ DEVICE = "CPU"
 INPUT_VIDEO = "/videos/person-bicycle-car-detection.mp4"
 OUTPUT_TYPE = "json"
 OUTPUT_JSON_PATH = "/mnt/data/output.json"
-YOLO_SCRIPT_PATH = "/opt/dlstreamer/samples/gstreamer/gst_launch/detection_with_yolo/yolo_detect.sh"
+YOLO_SCRIPT_PATH = "/home/dlstreamer/samples/gstreamer/gst_launch/detection_with_yolo/yolo_detect.sh"
 
 @given("the DL Streamer pipeline is running")
 def step_impl_pipeline_running(context):

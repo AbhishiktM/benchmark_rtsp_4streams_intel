@@ -20,7 +20,7 @@ jobs:
             --name dlstreamer \
             -p 8000:8000 \
             -v ${{ github.workspace }}/tests:/tests \
-            -v ${{ github.workspace }}/videos:/videos \
+            -v ${{ github.workspace }}/test_data:/videos \
             -v ${{ github.workspace }}/models:/home/dlstreamer/models \
             -v ${{ github.workspace }}/output:/mnt/data \
             --env MODELS_PATH=/home/dlstreamer/models \
@@ -62,7 +62,7 @@ jobs:
 
       - name: Run DL Streamer Pipeline
         run: |
-          docker exec dlstreamer bash -c "python3 /tests/test_steps.py"
+          docker exec dlstreamer bash -c "cd /tests && behave --no-capture"
 
       - name: Validate Output JSON
         run: |
