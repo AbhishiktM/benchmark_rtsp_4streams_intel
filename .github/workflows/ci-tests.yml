@@ -23,23 +23,26 @@ jobs:
             -v ${{ github.workspace }}/output:/mnt/data \
             intel/dlstreamer:latest
 
-      - name: Wait for DL Streamer to be ready
+      - name: Debug - List Running Containers
         run: |
-          for i in {1..10}; do
-            if curl -s http://localhost:8000/health; then
-              echo "DL Streamer is ready"
-              break
-            fi
-            echo "Waiting for DL Streamer..."
-            sleep 2
-          done
+          echo "Checking running containers..."
+          docker ps -a  # List all running containers
+          docker logs dlstreamer || echo "No logs available yet."
+
+      - name: Ensure DL Streamer is Running
+        run: |
+          if ! docker ps --format '{{.Names}}' | grep -q '^dlstreamer$'; then
+            echo "Error: DL Streamer container is NOT running!"
+            exit 1
+          fi
+          echo "DL Streamer is running successfully!"
 
       - name: Install Dependencies in DL Streamer Container
         run: |
           docker exec dlstreamer bash -c "apt update && apt install -y python3 python3-pip"
           docker exec dlstreamer bash -c "python3 -m pip install --upgrade pip"
           docker exec dlstreamer bash -c "pip3 install behave requests"
-  
+
       - name: Run DL Streamer Pipeline
         run: |
           docker exec dlstreamer bash -c "python3 /tests/test_steps.py"
