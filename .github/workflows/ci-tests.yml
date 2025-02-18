@@ -14,25 +14,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Start DL Streamer container
+      - name: Start DL Streamer container (Interactive Mode)
         run: |
-          docker run -d --rm --name dlstreamer -p 8000:8000 \
+          docker run -it --rm \
+            --name dlstreamer \
+            -p 8000:8000 \
             -v ${{ github.workspace }}/tests:/tests \
             -v ${{ github.workspace }}/videos:/videos \
-            -v ${{ github.workspace }}/models:/models \
+            -v ${{ github.workspace }}/models:/home/dlstreamer/models \
             -v ${{ github.workspace }}/output:/mnt/data \
-            intel/dlstreamer:latest
-
-      - name: Debug - List Running Containers
+            --env MODELS_PATH=/home/dlstreamer/models \
+            intel/dlstreamer:latest &
+        
+      - name: Debug - Check Running Containers
         run: |
           echo "Checking running containers..."
-          docker ps -a  # List all running containers
-          docker logs dlstreamer || echo "No logs available yet."
+          docker ps -a  # Print container status
 
       - name: Ensure DL Streamer is Running
         run: |
           if ! docker ps --format '{{.Names}}' | grep -q '^dlstreamer$'; then
             echo "Error: DL Streamer container is NOT running!"
+            docker ps -a  # Show all containers
             exit 1
           fi
           echo "DL Streamer is running successfully!"
