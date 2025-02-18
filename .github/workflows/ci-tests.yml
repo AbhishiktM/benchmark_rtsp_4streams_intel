@@ -34,11 +34,11 @@ jobs:
             sleep 2
           done
 
-          - name: Install Dependencies in DL Streamer Container
-          run: |
-            docker exec dlstreamer bash -c "apt update && apt install -y python3 python3-pip"
-            docker exec dlstreamer bash -c "python3 -m pip install --upgrade pip"
-            docker exec dlstreamer bash -c "pip3 install behave requests"
+      - name: Install Dependencies in DL Streamer Container
+        run: |
+          docker exec dlstreamer bash -c "apt update && apt install -y python3 python3-pip"
+          docker exec dlstreamer bash -c "python3 -m pip install --upgrade pip"
+          docker exec dlstreamer bash -c "pip3 install behave requests"
   
       - name: Run DL Streamer Pipeline
         run: |
