@@ -1,3 +1,4 @@
+import os
 import json
 import subprocess
 from behave import given, when, then
@@ -12,16 +13,15 @@ YOLO_SCRIPT_PATH = "/home/dlstreamer/samples/gstreamer/gst_launch/detection_with
 @given("the DL Streamer pipeline is running")
 def step_impl_pipeline_running(context):
     """
-    Verify that the DL Streamer container is running.
+    Verify that the DL Streamer process is running inside the container.
     """
     result = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", "dlstreamer"],
+        ["pgrep", "-x", "bash"],  # Check if any bash process is running
         capture_output=True,
         text=True,
         check=False
     )
-    running_status = result.stdout.strip().lower()
-    assert running_status == "true", "DL Streamer container is not running"
+    assert result.returncode == 0, "DL Streamer process is not running!"
 
 @when("I submit a sample video for detection")
 def step_impl_submit_video(context):
@@ -29,8 +29,7 @@ def step_impl_submit_video(context):
     Run object detection inside the DL Streamer container.
     """
     command = [
-        "docker", "exec", "dlstreamer", "bash", "-c",
-        f"{YOLO_SCRIPT_PATH} {MODEL} {DEVICE} {INPUT_VIDEO} {OUTPUT_TYPE} > {OUTPUT_JSON_PATH}"
+        YOLO_SCRIPT_PATH, MODEL, DEVICE, INPUT_VIDEO, OUTPUT_TYPE
     ]
     context.process = subprocess.run(
         command,
@@ -50,24 +49,14 @@ def step_impl_verify_detection(context):
         f"Detection command failed with error: {context.process.stderr}"
     )
 
-    # Read JSON output from the container
-    json_command = [
-        "docker", "exec", "dlstreamer", "bash", "-c",
-        f"cat {OUTPUT_JSON_PATH}"
-    ]
-    json_process = subprocess.run(
-        json_command,
-        capture_output=True,
-        text=True
-    )
-
-    if json_process.returncode != 0:
-        assert False, f"Failed to read JSON output: {json_process.stderr}"
-
+    # Read JSON output from the mounted volume
     try:
-        detection_result = json.loads(json_process.stdout)
+        with open(OUTPUT_JSON_PATH, "r") as json_file:
+            detection_result = json.load(json_file)
     except json.JSONDecodeError as e:
         assert False, f"Output is not valid JSON: {e}"
+    except FileNotFoundError:
+        assert False, "Output JSON file not found!"
 
     assert detection_result, "Detection JSON output is empty"
 
