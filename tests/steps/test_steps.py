@@ -1,6 +1,7 @@
 import json
 import subprocess
 import os
+import time
 from behave import given, when, then
 
 MODEL = "yolo11s"
@@ -21,7 +22,7 @@ def step_impl_pipeline_running(context):
 @when("I submit a sample video for detection")
 def step_impl_submit_video(context):
     """
-    Run object detection inside the DL Streamer container.
+    Run object detection inside the DL Streamer container and wait for completion.
     """
 
     # Debug: Print actual file locations
@@ -38,14 +39,28 @@ def step_impl_submit_video(context):
     command = [
         YOLO_SCRIPT_PATH, MODEL, DEVICE, INPUT_VIDEO, OUTPUT_TYPE
     ]
-    context.process = subprocess.run(
-        command,
-        capture_output=True,
-        text=True
+
+    print("\n🚀 Starting YOLO detection... Waiting for it to complete.")
+    
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
 
-    if context.process.returncode != 0:
-        print("❌ Error running detection:", context.process.stderr)
+    # Print YOLO script output in real-time
+    while True:
+        output = process.stdout.readline()
+        if output:
+            print(f"YOLO Output: {output.strip()}")
+        if process.poll() is not None:
+            break
+
+    # Capture final output
+    stdout, stderr = process.communicate()
+    print(f"\n✅ YOLO Detection Completed!\nOutput: {stdout}")
+    if stderr:
+        print(f"\n⚠️ Errors (if any): {stderr}")
+
+    context.process = process
 
 @then("I should receive an object detection result")
 def step_impl_verify_detection(context):
@@ -56,9 +71,13 @@ def step_impl_verify_detection(context):
         f"❌ Detection command failed with error: {context.process.stderr}"
     )
 
-    # Debug: Print actual file paths
-    print("\n🔎 Checking if output JSON exists:")
-    subprocess.run(["ls", "-lh", OUTPUT_JSON_PATH], check=False)
+    # Wait for output JSON to be generated
+    timeout = 30  # Max wait time in seconds
+    elapsed = 0
+    while not os.path.exists(OUTPUT_JSON_PATH) and elapsed < timeout:
+        print(f"⏳ Waiting for output JSON... {elapsed}s elapsed")
+        time.sleep(2)
+        elapsed += 2
 
     assert os.path.exists(OUTPUT_JSON_PATH), f"🚨 Output JSON file not found at {OUTPUT_JSON_PATH}"
 
