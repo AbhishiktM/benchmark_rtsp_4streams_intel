@@ -1,0 +1,70 @@
+name: DL Streamer Pipeline Tests
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  behave-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Start DL Streamer container (Keep Alive)
+        run: |
+          docker run -d --rm \
+            --name dlstreamer \
+            -p 8000:8000 \
+            -v ${{ github.workspace }}/tests:/tests \
+            -v ${{ github.workspace }}/test_data:/videos \
+            -v ${{ github.workspace }}/models:/home/dlstreamer/models \
+            -v ${{ github.workspace }}/output:/mnt/data \
+            --env MODELS_PATH=/home/dlstreamer/models \
+            --user root \
+            intel/dlstreamer:latest bash -c "tail -f /dev/null"
+
+      - name: Wait for DL Streamer to Start
+        run: |
+          echo "Waiting for DL Streamer container to become ready..."
+          for i in {1..10}; do
+            STATUS=$(docker inspect -f '{{.State.Running}}' dlstreamer 2>/dev/null || echo "not_found")
+            if [ "$STATUS" == "true" ]; then
+              echo "DL Streamer is fully started!"
+              break
+            elif [ "$STATUS" == "not_found" ]; then
+              echo "DL Streamer container not found! Retrying..."
+            else
+              echo "DL Streamer is still starting..."
+            fi
+            sleep 3
+          done
+          
+          if [ "$STATUS" != "true" ]; then
+            echo "Error: DL Streamer did not start properly!"
+            docker ps -a
+            exit 1
+          fi
+
+      - name: Debug - Check Running Containers
+        run: |
+          echo "Checking running containers..."
+          docker ps -a  # Print container status
+
+      - name: Install Dependencies in DL Streamer Container
+        run: |
+          docker exec dlstreamer bash -c "apt update && apt install -y python3 python3-pip"
+          docker exec dlstreamer bash -c "python3 -m pip install --upgrade pip"
+          docker exec dlstreamer bash -c "pip3 install behave requests"
+
+      - name: Run DL Streamer Pipeline
+        run: |
+          docker exec dlstreamer bash -c "cd /tests && behave --no-capture"
+
+      - name: Stop DL Streamer container
+        if: always()
+        run: |
+          docker stop dlstreamer
