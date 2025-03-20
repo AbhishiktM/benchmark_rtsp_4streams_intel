@@ -2,6 +2,7 @@ import logging
 import time
 from fastapi import FastAPI
 from kafka import KafkaProducer
+from typing import List, Optional
 from pydantic import BaseModel
 import json
 
@@ -30,9 +31,13 @@ else:
     print("❌ Failed to connect to Kafka after 10 attempts.")
     exit(1)
 
+
 class VideoProcessingRequest(BaseModel):
     video_file: str
-    processing: list[str] = ["gvadetect"]
+    processing: List[str] = ["gvadetect"]
+    detect_model: Optional[str] = None
+    pose_model: Optional[str] = None
+    track_model: Optional[str] = None  # Add this if tracking is needed
 
 @app.post("/send-job/")
 async def send_job(request: VideoProcessingRequest):
@@ -59,6 +64,7 @@ async def send_job(request: VideoProcessingRequest):
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn

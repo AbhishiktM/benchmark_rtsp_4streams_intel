@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 import openvino, sys, shutil, os
 
-model_name = 'yolo11s'
+model_name = 'yolo11s-pose'
 model_type = 'yolo_v11'
 weights = model_name + '.pt'
 model = YOLO(weights)

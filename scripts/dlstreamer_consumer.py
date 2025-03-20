@@ -2,6 +2,7 @@ import os
 import subprocess
 from kafka import KafkaConsumer, KafkaProducer
 import json
+from time import sleep
 
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
 REQUEST_TOPIC = "dlstreamer_requests"
@@ -10,6 +11,7 @@ RESULT_TOPIC = "dlstreamer_output"
 print(f"Connecting to Kafka at {KAFKA_BROKER}...")
 
 try:
+    sleep(10)
     consumer = KafkaConsumer(
         REQUEST_TOPIC,
         bootstrap_servers=[KAFKA_BROKER],
@@ -30,7 +32,9 @@ try:
 
         video_file = job.get("video_file")
         processing = job.get("processing", ["gvadetect"])
-        model = job.get("model", "/home/dlstreamer/models/public/yolo11s/FP32/yolo11s.xml")
+        detect_model = job.get("detect_model", "")
+        pose_model = job.get("pose_model", "")
+        track_model = job.get("track_model", "")
 
         if not video_file:
             print("⚠️ No video file specified!")
@@ -39,7 +43,7 @@ try:
         print(f" Sending {video_file} for processing with {processing}")
 
         # Run the script inside dlstreamer container
-        cmd = f"bash /home/dlstreamer/scripts/process_video.sh {video_file} \"{processing}\" {model}"
+        cmd = f"bash /home/dlstreamer/scripts/process_video.sh --video {video_file} --tasks \"{processing}\" --detect-model {detect_model} --pose-model {pose_model} --track-model {track_model}"
         try:
             subprocess.run(cmd, shell=True, check=True)
             print(f"Video {video_file} processed successfully!")

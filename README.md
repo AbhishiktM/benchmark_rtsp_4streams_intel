@@ -41,24 +41,6 @@ python3 -m pip install openvino-dev[onnx,tensorflow,pytorch]
 ---
 
 ### Ubuntu 22.04 & Ubuntu 24.04
-#### **Prerequisites**
-Install Docker if not already installed:
-```sh
-sudo apt update
-sudo apt install -y docker.io
-```
-
-Ensure Docker is running:
-```sh
-sudo systemctl start docker
-sudo systemctl enable docker
-```
-
-Grant permission to run Docker as a non-root user:
-```sh
-sudo usermod -aG docker $USER
-newgrp docker
-```
 
 #### **Run DLStreamer Container**
 For **Ubuntu 22.04**:
