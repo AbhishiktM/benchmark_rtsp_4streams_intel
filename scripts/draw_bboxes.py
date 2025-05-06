@@ -2,11 +2,11 @@ import cv2
 import json
 
 # Load YOLO output JSON
-with open("/Users/kushal/intel/videos/output_gp_pro_test2_1.json", "r") as f:
+with open("/Users/kushal/brysk/intel-fridge-processor/debug_outputs/tr.mp4_gvapose_results.json", "r") as f:
     data = json.load(f)
 
 # Open the video file
-video_path = "/Users/kushal/intel/videos/gopro_test2.mp4"
+video_path = "/Users/kushal/brysk/intel-dlstreamer-service/videos/tr.mp4"
 cap = cv2.VideoCapture(video_path)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

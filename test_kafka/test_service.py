@@ -7,7 +7,7 @@ from pydantic import BaseModel
 import json
 
 # ✅ Enable Kafka Debug Logs
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 
 # ✅ Change Kafka broker to container name (inside Podman network)
 KAFKA_BROKER = "kafka:9092"  # ✅ Inside Podman, use "kafka", NOT "localhost"
@@ -38,6 +38,7 @@ class VideoProcessingRequest(BaseModel):
     detect_model: Optional[str] = None
     pose_model: Optional[str] = None
     track_model: Optional[str] = None  # Add this if tracking is needed
+    camera_id: Optional[str] = None
 
 @app.post("/send-job/")
 async def send_job(request: VideoProcessingRequest):

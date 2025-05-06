@@ -1,2 +1,4 @@
 .venv
 dlstreamer_venv
+kafka_data
+videos

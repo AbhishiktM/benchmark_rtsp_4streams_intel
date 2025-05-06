@@ -35,7 +35,7 @@ services:
       - ./models:/home/dlstreamer/models
     depends_on:
       - kafka
-    restart: always
+    restart: on-failure
 
 
   fastapi-service:

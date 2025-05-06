@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# Default values (optional parameters)
+# Default values (required parameters)
 DETECT_MODEL_PATH=""
 POSE_MODEL_PATH=""
 TRACK_MODEL_PATH=""
 VIDEO_PATH=""
 PROCESSING=""
+CAMERA_ID=""
 
 # Parse named arguments
 while [[ "$#" -gt 0 ]]; do
@@ -15,6 +16,7 @@ while [[ "$#" -gt 0 ]]; do
         --detect-model) DETECT_MODEL_PATH="$2"; shift ;;
         --pose-model) POSE_MODEL_PATH="$2"; shift ;;  
         --track-model) TRACK_MODEL_PATH="$2"; shift ;;
+        --camera-id) CAMERA_ID="$2"; shift ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
     shift
@@ -25,10 +27,11 @@ echo "DEBUG: PROCESSING='$PROCESSING'"
 echo "DEBUG: DETECT_MODEL_PATH='$DETECT_MODEL_PATH'"
 echo "DEBUG: POSE_MODEL_PATH='$POSE_MODEL_PATH'"
 echo "DEBUG: TRACK_MODEL_PATH='$TRACK_MODEL_PATH'"
+echo "DEBUG: CAMERA_ID='$CAMERA_ID'"
 
 # Validate required arguments
 if [[ -z "$VIDEO_PATH" || -z "$PROCESSING" ]]; then
-    echo "Usage: $0 --video <video_path> --tasks '<task_list>' [--detect-model <path>] [--pose-model <path>] [--track-model <path>]"
+    echo "Usage: $0 --video <video_path> --tasks '<task_list>' [--detect-model <path>] [--pose-model <path>] [--track-model <path>] [--camera-id <id>]"
     exit 1
 fi
 
@@ -39,40 +42,93 @@ PROCESSING=$(echo "$PROCESSING" | tr -d '[]"')
 PROCESSING=$(echo "$PROCESSING" | sed "s/,/ /g" | tr -d "'")
 echo "DEBUG: PROCESSING=\"$PROCESSING\""
 
-# Loop through each task and execute sequentially with PID tracking
+# Sanitize input lists
+IFS=',' read -ra VIDEO_LIST <<< "$VIDEO_PATH"
+IFS=',' read -ra CAMERA_LIST <<< "$CAMERA_ID"
+
+# Validate input lengths
+if [[ "${#VIDEO_LIST[@]}" -ne "${#CAMERA_LIST[@]}" ]]; then
+    echo "Error: The number of videos and camera IDs must be the same."
+    exit 1
+fi
+
+
+# Track which tasks are enabled
+RUN_DETECT=false
+RUN_POSE=false
+
 for task in $PROCESSING; do
-    echo "DEBUG: Processing task: $task"
-
-    # Send Kafka message that the task is starting
-    python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO_PATH" --task "$task" --status "start"
-
-    PID=""
-
-    if [[ "$task" == "gvadetect" && -n "$DETECT_MODEL_PATH" ]]; then
-        PIPELINE="gst-launch-1.0 filesrc location=$VIDEO_PATH ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! gvametaconvert add-tensor-data=true ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink async=false"
-        echo "Running DL Streamer Pipeline for detection: $PIPELINE"
-        eval "$PIPELINE" &
-        PID=$!
-    fi
-
-    if [[ "$task" == "gvatrack" ]]; then
-        PIPELINE="gst-launch-1.0 filesrc location=$VIDEO_PATH ! decodebin ! gvatrack tracking-type=short-term-imageless ! queue ! gvametaconvert add-tensor-data=true ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink async=false"
-        echo "Running DL Streamer Pipeline for tracking: $PIPELINE"
-        eval "$PIPELINE" &
-        PID=$!
-    fi
-
-    if [[ "$task" == "gvapose" ]]; then
-        echo "Triggering Pose Estimation..."
-        python3 ./scripts/pose_estimation.py --video "$VIDEO_PATH" --model "$POSE_MODEL_PATH" --kafka-broker "kafka:9092" --kafka-topic "dlstreamer_output" &
-        PID=$!
-    fi
-
-    # Wait for the process to complete before sending the end message
-    if [[ -n "$PID" ]]; then
-        wait "$PID"
-        python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO_PATH" --task "$task" --status "end"
+    if [[ "$task" == "gvadetect" ]]; then
+        RUN_DETECT=true
+    elif [[ "$task" == "gvapose" ]]; then
+        RUN_POSE=true
+    else
+        echo "Invalid task '$task' ignored. Only 'gvadetect' and 'gvapose' are supported."
     fi
 done
 
-echo "All tasks for $VIDEO_PATH completed."
+# Send Kafka start messages
+# if $RUN_DETECT; then
+#     python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO_PATH" --task "gvadetect" --status "start"
+# fi
+
+# if $RUN_POSE; then
+#     python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO_PATH" --task "gvapose" --status "start"
+# fi
+
+
+# Tag JSON for Kafka output
+# DETECT_TAG="{\"camera\": \"$CAMERA_ID\", \"video\": \"$VIDEO_PATH\", \"task\": \"gvadetect\"}"
+# POSE_TAG="{\"camera\": \"$CAMERA_ID\", \"video\": \"$VIDEO_PATH\", \"task\": \"gvapose\"}"
+
+# Build combined pipeline
+PIPELINE="gst-launch-1.0 "
+
+# Loop to append branches
+for i in "${!VIDEO_LIST[@]}"; do
+    VIDEO="${VIDEO_LIST[$i]}"
+    CAM_ID="${CAMERA_LIST[$i]}"
+    # Send Kafka start messages
+    $RUN_DETECT && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvadetect" --status "start" --camera "$CAM_ID"
+    $RUN_POSE && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvapose" --status "start" --camera "$CAM_ID"
+
+    DETECT_TAG="{\"camera\": \"$CAM_ID\", \"video\": \"$VIDEO\", \"task\": \"gvadetect\"}"
+    POSE_TAG="{\"camera\": \"$CAM_ID\", \"video\": \"$VIDEO\", \"task\": \"gvapose\"}"
+
+    # # Send Kafka start messages
+    # $RUN_DETECT && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvadetect" --status "start"
+    # $RUN_POSE && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvapose" --status "start"
+
+    # Append detection pipeline
+    if $RUN_DETECT; then
+        PIPELINE+="filesrc location=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+    fi
+
+    # Append pose pipeline
+    if $RUN_POSE; then
+        PIPELINE+="filesrc location=$VIDEO ! decodebin3 ! gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+    fi
+done
+
+echo "Running unified DL Streamer pipeline:"
+echo "$PIPELINE"
+
+# Execute pipeline
+eval "$PIPELINE"
+STATUS=$?
+echo "Status - $STATUS"
+
+# Send Kafka end messages
+# Send Kafka end messages per pair
+if [[ "$STATUS" -eq 0 ]]; then
+    for i in "${!VIDEO_LIST[@]}"; do
+        VIDEO="${VIDEO_LIST[$i]}"
+        CAM_ID="${CAMERA_LIST[$i]}"
+        $RUN_DETECT && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvadetect" --status "end" --camera "$CAM_ID"
+        $RUN_POSE && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvapose" --status "end" --camera "$CAM_ID"
+    done
+
+    echo "All tasks for $VIDEO_PATH completed successfully."
+else
+    echo "DL Streamer pipeline failed with exit code $STATUS."
+fi
