@@ -125,7 +125,7 @@ for i in "${!VIDEO_LIST[@]}"; do
             PIPELINE+="gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
         fi
     fi
-
+done
 
 echo "Running unified DL Streamer pipeline:"
 echo "$PIPELINE"
