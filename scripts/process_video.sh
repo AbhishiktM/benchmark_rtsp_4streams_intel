@@ -86,25 +86,46 @@ for i in "${!VIDEO_LIST[@]}"; do
 
     # Append detection pipeline
     if [[ "$LIVESTREAM" == "true" ]]; then
-        # Detection branch
-        if $RUN_DETECT; then
-            PIPELINE+="v4l2src device=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue !"
+        if $RUN_DETECT && $RUN_POSE; then
+            # Combined pipeline (single source, both models sequentially)
+            PIPELINE+="v4l2src device=$VIDEO ! decodebin ! "
+            PIPELINE+="gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! "
+            PIPELINE+="gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! "
+            PIPELINE+="gvametaconvert format=json tags='$POSE_TAG' ! "
+            PIPELINE+="gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+        
+        elif $RUN_DETECT; then
+            # Only detection branch
+            PIPELINE+="v4l2src device=$VIDEO ! decodebin ! "
+            PIPELINE+="gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! "
+            PIPELINE+="gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! "
+            PIPELINE+="gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+
+        elif $RUN_POSE; then
+            # Only pose branch
+            PIPELINE+="v4l2src device=$VIDEO ! decodebin ! "
+            PIPELINE+="gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! "
+            PIPELINE+="gvametaconvert format=json tags='$POSE_TAG' ! "
+            PIPELINE+="gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
         fi
-        # Pose branch
-        if $RUN_POSE; then
-            PIPELINE+=" gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
-        fi
+
     else
-        # Detection branch
+        # File-based pipeline
         if $RUN_DETECT; then
-            PIPELINE+="filesrc location=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+            PIPELINE+="filesrc location=$VIDEO ! decodebin ! "
+            PIPELINE+="gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! "
+            PIPELINE+="gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! "
+            PIPELINE+="gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
         fi
-        # Pose branch
+
         if $RUN_POSE; then
-            PIPELINE+="filesrc location=$VIDEO ! decodbin3 ! gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+            PIPELINE+="filesrc location=$VIDEO ! decodebin3 ! "
+            PIPELINE+="gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! "
+            PIPELINE+="gvametaconvert format=json tags='$POSE_TAG' ! "
+            PIPELINE+="gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
         fi
     fi
-done
+
 
 echo "Running unified DL Streamer pipeline:"
 echo "$PIPELINE"
