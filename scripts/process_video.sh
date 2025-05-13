@@ -88,11 +88,11 @@ for i in "${!VIDEO_LIST[@]}"; do
     if [[ "$LIVESTREAM" == "true" ]]; then
         # Detection branch
         if $RUN_DETECT; then
-            PIPELINE+="v4l2src device=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+            PIPELINE+="v4l2src device=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue !"
         fi
         # Pose branch
         if $RUN_POSE; then
-            PIPELINE+="v4l2src device=$VIDEO ! decodebin3 ! gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+            PIPELINE+=" gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
         fi
     else
         # Detection branch
