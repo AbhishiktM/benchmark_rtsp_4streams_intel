@@ -2,3 +2,10 @@
 dlstreamer_venv
 kafka_data
 videos
+*.pt
+models/public/best_2804*
+models/public/best_090524*
+models/public/epoch_10/*
+*DS_Store*
+models.zip
+scripts/Output.mp4

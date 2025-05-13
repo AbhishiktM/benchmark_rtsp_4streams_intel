@@ -21,7 +21,7 @@ try:
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         auto_offset_reset="earliest",
         enable_auto_commit=False,
-        max_poll_interval_ms=600000,  # 10 minutes to prevent rebalance during long jobs
+        max_poll_interval_ms=6000000,  # 100 minutes to prevent rebalance during long jobs
         session_timeout_ms=30000,
     )
     print(f"Connected to Kafka topic: {REQUEST_TOPIC}")
@@ -41,6 +41,7 @@ try:
         pose_model = job.get("pose_model", "")
         track_model = job.get("track_model", "")
         camera_id = job.get("camera_id", "")
+        livestream = job.get("livestream", "")
 
         if not video_file:
             print("No video file specified!")
@@ -48,7 +49,7 @@ try:
 
         print(f"Sending {video_file} for processing with {processing}")
 
-        cmd = f"bash /home/dlstreamer/scripts/process_video.sh --video {video_file} --tasks \"{processing}\" --detect-model {detect_model} --pose-model {pose_model} --track-model {track_model} --camera-id {camera_id}"
+        cmd = f"bash /home/dlstreamer/scripts/process_video.sh --video {video_file} --tasks \"{processing}\" --detect-model {detect_model} --pose-model {pose_model} --track-model {track_model} --camera-id {camera_id} --livestream {livestream}"
 
         try:
             subprocess.run(cmd, shell=True, check=True)

@@ -39,6 +39,7 @@ class VideoProcessingRequest(BaseModel):
     pose_model: Optional[str] = None
     track_model: Optional[str] = None  # Add this if tracking is needed
     camera_id: Optional[str] = None
+    livestream: Optional[str] = None
 
 @app.post("/send-job/")
 async def send_job(request: VideoProcessingRequest):

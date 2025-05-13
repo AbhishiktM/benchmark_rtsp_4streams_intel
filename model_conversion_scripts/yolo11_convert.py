@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 import openvino, sys, shutil, os
 
-model_name = 'yolo11s-pose'
+model_name = 'best_090524'
 model_type = 'yolo_v11'
 weights = model_name + '.pt'
 model = YOLO(weights)
@@ -22,4 +22,4 @@ openvino.save_model(ov_model, './FP32/' + model_name + '.xml', compress_to_fp16=
 openvino.save_model(ov_model, './FP16/' + model_name + '.xml', compress_to_fp16=True)
 
 shutil.rmtree(converted_path)
-os.remove(f"{model_name}.pt")
+# os.remove(f"{model_name}.pt")
