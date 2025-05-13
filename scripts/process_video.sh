@@ -7,6 +7,7 @@ TRACK_MODEL_PATH=""
 VIDEO_PATH=""
 PROCESSING=""
 CAMERA_ID=""
+LIVESTREAM=""
 
 # Parse named arguments
 while [[ "$#" -gt 0 ]]; do
@@ -17,6 +18,7 @@ while [[ "$#" -gt 0 ]]; do
         --pose-model) POSE_MODEL_PATH="$2"; shift ;;  
         --track-model) TRACK_MODEL_PATH="$2"; shift ;;
         --camera-id) CAMERA_ID="$2"; shift ;;
+        --livestream) LIVESTREAM="$2"; shift ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
     shift
@@ -28,6 +30,7 @@ echo "DEBUG: DETECT_MODEL_PATH='$DETECT_MODEL_PATH'"
 echo "DEBUG: POSE_MODEL_PATH='$POSE_MODEL_PATH'"
 echo "DEBUG: TRACK_MODEL_PATH='$TRACK_MODEL_PATH'"
 echo "DEBUG: CAMERA_ID='$CAMERA_ID'"
+echo "DEBUG: LIVESTREAM='$LIVESTREAM'"
 
 # Validate required arguments
 if [[ -z "$VIDEO_PATH" || -z "$PROCESSING" ]]; then
@@ -67,20 +70,6 @@ for task in $PROCESSING; do
     fi
 done
 
-# Send Kafka start messages
-# if $RUN_DETECT; then
-#     python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO_PATH" --task "gvadetect" --status "start"
-# fi
-
-# if $RUN_POSE; then
-#     python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO_PATH" --task "gvapose" --status "start"
-# fi
-
-
-# Tag JSON for Kafka output
-# DETECT_TAG="{\"camera\": \"$CAMERA_ID\", \"video\": \"$VIDEO_PATH\", \"task\": \"gvadetect\"}"
-# POSE_TAG="{\"camera\": \"$CAMERA_ID\", \"video\": \"$VIDEO_PATH\", \"task\": \"gvapose\"}"
-
 # Build combined pipeline
 PIPELINE="gst-launch-1.0 "
 
@@ -95,18 +84,25 @@ for i in "${!VIDEO_LIST[@]}"; do
     DETECT_TAG="{\"camera\": \"$CAM_ID\", \"video\": \"$VIDEO\", \"task\": \"gvadetect\"}"
     POSE_TAG="{\"camera\": \"$CAM_ID\", \"video\": \"$VIDEO\", \"task\": \"gvapose\"}"
 
-    # # Send Kafka start messages
-    # $RUN_DETECT && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvadetect" --status "start"
-    # $RUN_POSE && python3 ./scripts/define_video_boundary_kafka.py --video "$VIDEO" --task "gvapose" --status "start"
-
     # Append detection pipeline
-    if $RUN_DETECT; then
-        PIPELINE+="filesrc location=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
-    fi
-
-    # Append pose pipeline
-    if $RUN_POSE; then
-        PIPELINE+="filesrc location=$VIDEO ! decodebin3 ! gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+        if [[ "$LIVESTREAM" == "true" ]]; then
+        # Detection branch
+        if $RUN_DETECT; then
+            PIPELINE+="v4l2src device=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+        fi
+        # Pose branch
+        if $RUN_POSE; then
+            PIPELINE+="v4l2src device=$VIDEO ! decodebin3 ! gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+        fi
+    else
+        # Detection branch
+        if $RUN_DETECT; then
+            PIPELINE+="filesrc location=$VIDEO ! decodebin ! gvadetect model=$DETECT_MODEL_PATH device=CPU pre-process-backend=ie ! queue ! gvametaconvert add-tensor-data=true tags='$DETECT_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+        fi
+        # Pose branch
+        if $RUN_POSE; then
+            PIPELINE+="filesrc location=$VIDEO ! decodebin3 ! gvadetect model=$POSE_MODEL_PATH device=CPU pre-process-backend=opencv ! queue ! gvametaconvert format=json tags='$POSE_TAG' ! gvametapublish file-format=json-lines method=kafka address=kafka:9092 topic=dlstreamer_output ! fakesink "
+        fi
     fi
 done
 
