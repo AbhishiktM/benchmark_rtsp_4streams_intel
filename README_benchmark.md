@@ -131,14 +131,3 @@ benchmark_results/
 ```
 
 You can export them as `.csv` for further analysis.
-
-## 🤝 Contributing
-
-Contributions are welcome!  
-If you find bugs or performance issues, feel free to open an issue or submit a PR.
-
-## 🧠 Credits
-
-Developed as a universal DLStreamer-based AI inference pipeline with a focus on cross-GPU support (Intel, AMD, NVIDIA) and real-time benchmarking.
-
-⭐ **If you find this useful, give it a star on GitHub!**
