@@ -1,0 +1,99 @@
+services:
+  rtsp-server:
+    image: bluenviron/mediamtx:latest
+    container_name: rtsp-server
+    ports:
+      - "8554:8554"  # RTSP port
+      - "8888:8888"  # HLS/API port
+      - "8889:8889"  # WebRTC port
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    environment:
+      - MTX_API=yes
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8888/v1/config/get"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  cam0-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam0-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_shared_net
+    depends_on:
+      - rtsp-server
+    restart: unless-stopped
+    command: >
+      -re -stream_loop -1 -i /videos/cam0_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam0
+
+  cam2-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam2-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_shared_net
+    depends_on:
+      - rtsp-server
+      - cam0-feeder
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 5 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam2_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam2"
+
+  cam4-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam4-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_shared_net
+    depends_on:
+      - rtsp-server
+      - cam2-feeder
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 10 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam4_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam4"
+
+  cam6-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam6-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_shared_net
+    depends_on:
+      - rtsp-server
+      - cam4-feeder
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 15 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam6_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam6"
+
+networks:
+  dlstreamer_shared_net:
+    external: true

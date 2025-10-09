@@ -9,3 +9,30 @@ models/public/epoch_10/*
 *DS_Store*
 models.zip
 scripts/Output.mp4
+# Ignore compiled / generated files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore large model files and binaries
+*.bin
+*.xml
+*.pt
+*.mp4
+*.json
+
+# Ignore system or IDE files
+.vscode/
+.DS_Store
+.idea/
+
+# Ignore Docker data
+*.log
+*.pid
+*.sock
+*.db
+*.tar
+kafka_data/
+benchmark_results/
+outputs/
+debug_outputs/

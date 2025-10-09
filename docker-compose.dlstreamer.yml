@@ -1,0 +1,349 @@
+# services:
+#   zookeeper:
+#     image: wurstmeister/zookeeper
+#     container_name: zookeeper_dlstreamer
+#     ports:
+#       - "2181:2181"
+#     networks:
+#       - dlstreamer_shared_net
+#     restart: unless-stopped
+
+#   kafka:
+#     image: wurstmeister/kafka
+#     container_name: kafka_dlstreamer
+#     ports:
+#       - "9092:9092"
+#     environment:
+#       - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092
+#       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+#       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+#       - KAFKA_BROKER_ID=1
+#       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+#       - KAFKA_CREATE_TOPICS=dlstreamer_output:4:1
+#     volumes:
+#       - ./kafka_data:/var/lib/kafka/data
+#     depends_on:
+#       - zookeeper
+#     networks:
+#       - dlstreamer_shared_net
+#     restart: unless-stopped
+#     healthcheck:
+#       test: ["CMD", "nc", "-z", "localhost", "9092"]
+#       interval: 10s
+#       retries: 5
+#       start_period: 20s
+
+#   dlstreamer:
+#     build: .
+#     container_name: dlstreamer_inference
+#     volumes:
+#       - ./scripts:/home/dlstreamer/scripts
+#       - ./videos:/home/dlstreamer/videos
+#       - ./models:/home/dlstreamer/models
+#       - ./benchmark_results:/benchmark_results
+#       - /var/run/docker.sock:/var/run/docker.sock
+#     depends_on:
+#       kafka:
+#         condition: service_healthy
+#     networks:
+#       - dlstreamer_shared_net
+#     restart: unless-stopped
+#     environment:
+#       - KAFKA_BROKER=kafka:9092
+#       - GST_DEBUG=2
+#       - DISPLAY=${DISPLAY:-:0}
+#     command: >
+#       bash -c "
+#       echo 'Waiting for Kafka to be ready...' &&
+#       sleep 15 &&
+#       echo 'Making scripts executable...' &&
+#       chmod +x /home/dlstreamer/scripts/process_video.sh &&
+#       echo 'Starting DLStreamer inference on RTSP feeds...' &&
+#       /home/dlstreamer/scripts/process_video.sh 
+#       --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
+#       --tasks 'gvadetect,gvapose' 
+#       --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
+#       --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
+#       --camera-id 'cam0,cam2,cam4,cam6' 
+#       --livestream 'true'
+#       "
+#     deploy:
+#       resources:
+#         limits:
+#           memory: 4G
+#         reservations:
+#           memory: 2G
+
+#   benchmark-monitor:
+#     image: python:3.9-slim
+#     container_name: benchmark_monitor
+#     volumes:
+#       - ./benchmark_results:/benchmark_results
+#       - ./benchmark_monitor.py:/app/benchmark_monitor.py:ro
+#       - /var/run/docker.sock:/var/run/docker.sock
+#     depends_on:
+#       kafka:
+#         condition: service_healthy
+#     networks:
+#       - dlstreamer_shared_net
+#     restart: unless-stopped
+#     environment:
+#       - KAFKA_BROKER=kafka:9092
+#       - PYTHONUNBUFFERED=1
+#     command: >
+#       bash -c "
+#       pip install kafka-python psutil docker &&
+#       python /app/benchmark_monitor.py
+#       "
+
+# networks:
+#   dlstreamer_shared_net:
+#     external: true
+
+
+
+
+services:
+  zookeeper:
+    image: wurstmeister/zookeeper
+    container_name: zookeeper_dlstreamer
+    ports:
+      - "2181:2181"
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+
+  kafka:
+    image: wurstmeister/kafka
+    container_name: kafka_dlstreamer
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_BROKER_ID=1
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CREATE_TOPICS=dlstreamer_output:4:1
+    volumes:
+      - ./kafka_data:/var/lib/kafka/data
+    depends_on:
+      - zookeeper
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
+      interval: 10s
+      retries: 5
+      start_period: 20s
+
+  # CPU-only version
+  dlstreamer-cpu:
+    build: .
+    container_name: dlstreamer_cpu
+    profiles: ["cpu"]
+    volumes:
+      - ./scripts:/home/dlstreamer/scripts
+      - ./videos:/home/dlstreamer/videos
+      - ./models:/home/dlstreamer/models
+      - ./benchmark_results:/benchmark_results
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - GST_DEBUG=2
+    command: >
+      bash -c "
+      echo 'Starting CPU-only DLStreamer...' &&
+      sleep 15 &&
+      chmod +x /home/dlstreamer/scripts/process_video.sh &&
+      /home/dlstreamer/scripts/process_video.sh 
+      --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
+      --tasks 'gvadetect,gvapose' 
+      --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
+      --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
+      --camera-id 'cam0,cam2,cam4,cam6' 
+      --device 'CPU'
+      --livestream 'true'
+      "
+
+  # GPU-enabled version with proper runtime
+  dlstreamer-gpu:
+    build: .
+    container_name: dlstreamer_gpu
+    profiles: ["gpu"]
+    volumes:
+      - ./scripts:/home/dlstreamer/scripts
+      - ./videos:/home/dlstreamer/videos
+      - ./models:/home/dlstreamer/models
+      - ./benchmark_results:/benchmark_results
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - GST_DEBUG=2
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      bash -c "
+      echo 'Starting GPU-accelerated DLStreamer...' &&
+      nvidia-smi &&
+      sleep 15 &&
+      chmod +x /home/dlstreamer/scripts/process_video.sh &&
+      /home/dlstreamer/scripts/process_video.sh 
+      --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
+      --tasks 'gvadetect,gvapose' 
+      --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
+      --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
+      --camera-id 'cam0,cam2,cam4,cam6' 
+      --device 'GPU'
+      --livestream 'true'
+      "
+
+  # Auto device selection version
+  dlstreamer-auto:
+    build: .
+    container_name: dlstreamer_auto
+    profiles: ["auto"]
+    volumes:
+      - ./scripts:/home/dlstreamer/scripts
+      - ./videos:/home/dlstreamer/videos
+      - ./models:/home/dlstreamer/models
+      - ./benchmark_results:/benchmark_results
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - GST_DEBUG=2
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      bash -c "
+      echo 'Starting Auto-device DLStreamer...' &&
+      nvidia-smi || echo 'GPU not available, will use CPU' &&
+      sleep 15 &&
+      chmod +x /home/dlstreamer/scripts/process_video.sh &&
+      /home/dlstreamer/scripts/process_video.sh 
+      --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
+      --tasks 'gvadetect,gvapose' 
+      --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
+      --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
+      --camera-id 'cam0,cam2,cam4,cam6' 
+      --device 'AUTO'
+      --livestream 'true'
+      "
+
+  dlstreamer-hybrid:
+    build: .
+    container_name: dlstreamer_hybrid
+    profiles: ["hybrid"]
+    volumes:
+      - ./scripts:/home/dlstreamer/scripts
+      - ./videos:/home/dlstreamer/videos
+      - ./models:/home/dlstreamer/models
+      - ./benchmark_results:/benchmark_results
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - GST_DEBUG=2
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      bash -c "
+      echo 'Starting Hybrid GPU Decode + CPU Inference DLStreamer...' &&
+      nvidia-smi &&
+      sleep 15 &&
+      chmod +x /home/dlstreamer/scripts/process_video.sh &&
+      /home/dlstreamer/scripts/process_video.sh 
+      --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
+      --tasks 'gvadetect,gvapose' 
+      --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
+      --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
+      --camera-id 'cam0,cam2,cam4,cam6' 
+      --device 'CPU'
+      --livestream 'true'
+      "
+
+
+  # Enhanced benchmark monitor with GPU access
+  benchmark-monitor:
+    image: python:3.9-slim
+    container_name: benchmark_monitor
+    volumes:
+      - ./benchmark_results:/benchmark_results
+      - ./benchmark_monitor.py:/app/benchmark_monitor.py:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    privileged: true
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      bash -c "
+      apt-get update && apt-get install -y procps &&
+      pip install kafka-python psutil docker &&
+      python /app/benchmark_monitor.py
+      "
+
+networks:
+  dlstreamer_shared_net:
+    external: true
