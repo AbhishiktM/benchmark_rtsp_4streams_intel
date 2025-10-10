@@ -319,10 +319,18 @@ if __name__ == "__main__":
     
     config = detector.get_optimal_config()
     
+    gpu = detector.system_info.get('gpu', {})
+    if gpu.get('intel_arc_available'):
+        device_str = "GPU.1"  # Arc A770 is second GPU
+    elif gpu.get('intel_igpu_available'):
+        device_str = "GPU.0"  # iGPU is first GPU
+    else:
+        device_str = config['device']
+    
     # Print in format expected by process_video.sh
-    print(f"DEVICE={config['device']}")
+    print(f"DEVICE={device_str}")
     print(f"INFO={config['expected_performance']}")
-    print(f"STATUS={'OPTIMAL' if 'Arc' in str(detector.system_info['gpu']) else 'GOOD' if 'intel' in str(detector.system_info['gpu']).lower() else 'FALLBACK'}")
+    print(f"STATUS={'OPTIMAL' if 'Arc' in str(gpu) else 'GOOD' if 'intel' in str(gpu).lower() else 'FALLBACK'}")
     
     if args.verbose:
         print("\n📊 Configuration:")
