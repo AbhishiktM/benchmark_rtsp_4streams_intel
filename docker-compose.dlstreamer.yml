@@ -289,23 +289,25 @@ services:
       - ./models:/home/dlstreamer/models
       - ./benchmark_results:/benchmark_results
       - /var/run/docker.sock:/var/run/docker.sock
-      - /dev/dri:/dev/dri  # ✅ Intel GPU access
+      - /dev/dri:/dev/dri
     devices:
-      - /dev/dri:/dev/dri  # ✅ Device passthrough
+      - /dev/dri:/dev/dri
     depends_on:
       kafka:
         condition: service_healthy
     networks:
       - dlstreamer_shared_net
     restart: unless-stopped
-    privileged: true  # ✅ Required for GPU access
+    privileged: true
     environment:
       - KAFKA_BROKER=kafka:9092
       - GST_DEBUG=2
-      - LIBVA_DRIVER_NAME=iHD  # ✅ Intel iHD driver
+      - LIBVA_DRIVER_NAME=iHD
       - GST_VAAPI_ALL_DRIVERS=1
       - LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
       - DISPLAY=${DISPLAY:-:0}
+      - GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129  # ✅ Force Arc A770
+      - LIBVA_DEVICE=/dev/dri/renderD129           # ✅ Force Arc A770
     command: >
       bash -c "
       echo '========================================' &&
@@ -326,7 +328,7 @@ services:
       --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
       --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
       --camera-id 'cam0,cam2,cam4,cam6' 
-      --device 'AUTO'
+      --device 'GPU.1'
       "
 
   # CPU-only version (fallback)
