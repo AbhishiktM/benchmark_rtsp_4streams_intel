@@ -554,18 +554,67 @@ from kafka.errors import KafkaError
 class UniversalSystemProfiler:
     """Universal hardware detection for Intel, AMD, and NVIDIA systems"""
     
+class UniversalSystemProfiler:
+    """Universal hardware detection for Intel, AMD, and NVIDIA systems"""
+    
     def __init__(self):
-        self.system_info = self._detect_system()
+        # Initialize system_info as empty dict FIRST
+        self.system_info = {}
         
-    def _detect_system(self):
-        """Detect system hardware capabilities universally"""
-        return {
-            'cpu': self._detect_cpu(),
-            'memory': self._detect_memory(),
-            'gpu': self._detect_gpu(),
-            'storage': self._detect_storage(),
-            'capabilities': self._detect_capabilities()
-        }
+        # Now populate it step by step
+        try:
+            self.system_info['cpu'] = self._detect_cpu()
+            self.system_info['memory'] = self._detect_memory()
+            self.system_info['gpu'] = self._detect_gpu()
+            self.system_info['storage'] = self._detect_storage()
+            self.system_info['capabilities'] = self._detect_capabilities()
+        except Exception as e:
+            print(f"Warning: System detection failed: {e}")
+            # Provide fallback values
+            self.system_info = {
+                'cpu': {
+                    'physical_cores': 4,
+                    'logical_cores': 8,
+                    'model': 'Unknown CPU',
+                    'vendor': 'Unknown',
+                    'performance_class': 'Medium'
+                },
+                'memory': {
+                    'total_gb': 8,
+                    'available_gb': 4,
+                    'performance_class': 'Medium'
+                },
+                'gpu': {
+                    'nvidia_available': False,
+                    'intel_available': False,
+                    'amd_available': False,
+                    'devices': [],
+                    'performance_class': 'None',
+                    'optimal_mode': 'CPU'
+                },
+                'storage': {
+                    'total_gb': 100,
+                    'free_gb': 50
+                },
+                'capabilities': {
+                    'recommended_device': 'CPU',
+                    'max_concurrent_streams': 2,
+                    'supports_hardware_decode': False,
+                    'thermal_throttling_risk': 'Unknown',
+                    'optimization_recommendations': []
+                }
+            }
+
+        
+    # def _detect_system(self):
+    #     """Detect system hardware capabilities universally"""
+    #     return {
+    #         'cpu': self._detect_cpu(),
+    #         'memory': self._detect_memory(),
+    #         'gpu': self._detect_gpu(),
+    #         'storage': self._detect_storage(),
+    #         'capabilities': self._detect_capabilities()
+    #     }
     
     def _detect_cpu(self):
         """Universal CPU detection"""
@@ -745,61 +794,63 @@ class UniversalSystemProfiler:
             return {'error': str(e)}
     
     def _detect_capabilities(self):
-        """Universal capability detection"""
-        capabilities = {
-            'recommended_device': 'CPU',
-            'max_concurrent_streams': 1,
-            'supports_hardware_decode': False,
-            'thermal_throttling_risk': 'Unknown',
-            'optimization_recommendations': []
-        }
-        
-        cpu = self.system_info.get('cpu', {})
-        gpu = self.system_info.get('gpu', {})
-        memory = self.system_info.get('memory', {})
-        
-        # Determine recommended device based on available hardware
-        if gpu.get('intel_available'):
-            capabilities['recommended_device'] = 'GPU'
-            capabilities['supports_hardware_decode'] = True
-            capabilities['optimization_recommendations'].append("Intel GPU detected - optimal for OpenVINO")
-        elif gpu.get('nvidia_available'):
-            capabilities['recommended_device'] = 'HYBRID'
-            capabilities['supports_hardware_decode'] = True
-            capabilities['optimization_recommendations'].append("NVIDIA GPU detected - use for decode, CPU for inference")
-        elif gpu.get('amd_available'):
-            capabilities['recommended_device'] = 'HYBRID'
-            capabilities['supports_hardware_decode'] = True
-            capabilities['optimization_recommendations'].append("AMD GPU detected - use for decode, CPU for inference")
-        else:
-            capabilities['recommended_device'] = 'CPU'
-            capabilities['optimization_recommendations'].append("No GPU detected - CPU-only processing")
-        
-        # Estimate max concurrent streams
-        logical_cores = cpu.get('logical_cores', 4)
-        memory_gb = memory.get('total_gb', 8)
-        
-        if capabilities['recommended_device'] == 'GPU':
-            capabilities['max_concurrent_streams'] = min(8, max(4, logical_cores // 2))
-        elif capabilities['recommended_device'] == 'HYBRID':
-            capabilities['max_concurrent_streams'] = min(6, max(3, logical_cores // 3))
-        else:
-            capabilities['max_concurrent_streams'] = max(1, min(4, logical_cores // 4))
-        
-        # Thermal throttling risk assessment
-        cpu_class = cpu.get('performance_class', 'Low')
-        cpu_vendor = cpu.get('vendor', 'Unknown')
-        max_freq = cpu.get('max_frequency_mhz', 0)
-        
-        if 'laptop' in cpu.get('model', '').lower() or max_freq < 3000:
-            capabilities['thermal_throttling_risk'] = 'High'
-            capabilities['optimization_recommendations'].append("Laptop CPU detected - monitor thermal throttling")
-        elif cpu_class == 'High' and cpu_vendor in ['Intel', 'AMD']:
-            capabilities['thermal_throttling_risk'] = 'Low'
-        else:
-            capabilities['thermal_throttling_risk'] = 'Medium'
+            """Universal capability detection"""
+            capabilities = {
+                'recommended_device': 'CPU',
+                'max_concurrent_streams': 1,
+                'supports_hardware_decode': False,
+                'thermal_throttling_risk': 'Unknown',
+                'optimization_recommendations': []
+            }
             
-        return capabilities
+            # Safely get system info with fallbacks
+            cpu = self.system_info.get('cpu', {})
+            gpu = self.system_info.get('gpu', {})
+            memory = self.system_info.get('memory', {})
+            
+            # Determine recommended device based on available hardware
+            if gpu.get('intel_available'):
+                capabilities['recommended_device'] = 'GPU'
+                capabilities['supports_hardware_decode'] = True
+                capabilities['optimization_recommendations'].append("Intel GPU detected - optimal for OpenVINO")
+            elif gpu.get('nvidia_available'):
+                capabilities['recommended_device'] = 'HYBRID'
+                capabilities['supports_hardware_decode'] = True
+                capabilities['optimization_recommendations'].append("NVIDIA GPU detected - use for decode, CPU for inference")
+            elif gpu.get('amd_available'):
+                capabilities['recommended_device'] = 'HYBRID'
+                capabilities['supports_hardware_decode'] = True
+                capabilities['optimization_recommendations'].append("AMD GPU detected - use for decode, CPU for inference")
+            else:
+                capabilities['recommended_device'] = 'CPU'
+                capabilities['optimization_recommendations'].append("No GPU detected - CPU-only processing")
+            
+            # Estimate max concurrent streams
+            logical_cores = cpu.get('logical_cores', 4)
+            memory_gb = memory.get('total_gb', 8)
+            
+            if capabilities['recommended_device'] == 'GPU':
+                capabilities['max_concurrent_streams'] = min(8, max(4, logical_cores // 2))
+            elif capabilities['recommended_device'] == 'HYBRID':
+                capabilities['max_concurrent_streams'] = min(6, max(3, logical_cores // 3))
+            else:
+                capabilities['max_concurrent_streams'] = max(1, min(4, logical_cores // 4))
+            
+            # Thermal throttling risk assessment
+            cpu_class = cpu.get('performance_class', 'Low')
+            cpu_vendor = cpu.get('vendor', 'Unknown')
+            max_freq = cpu.get('max_frequency_mhz', 0)
+            
+            if 'laptop' in cpu.get('model', '').lower() or max_freq < 3000:
+                capabilities['thermal_throttling_risk'] = 'High'
+                capabilities['optimization_recommendations'].append("Laptop CPU detected - monitor thermal throttling")
+            elif cpu_class == 'High' and cpu_vendor in ['Intel', 'AMD']:
+                capabilities['thermal_throttling_risk'] = 'Low'
+            else:
+                capabilities['thermal_throttling_risk'] = 'Medium'
+                
+            return capabilities
+
     
     def get_optimal_config(self, num_streams=4, dual_models=True):
         """Get optimal configuration for given workload"""
@@ -947,8 +998,92 @@ class EnhancedBenchmarkMonitor:
         print(f"Kafka: {kafka_broker}, Topic: {topic}")
         print(f"Results will be saved to: {self.benchmark_dir}")
 
-    # [Rest of the benchmark monitor methods remain the same as in the previous version]
-    # ... (include all the other methods from the previous benchmark_monitor.py)
+    def run(self):
+            """Main monitoring loop"""
+            print("✅ Connected to Kafka broker")
+            print("📊 Monitoring cameras: ['cam0', 'cam2', 'cam4', 'cam6']")
+            print("⏳ Waiting for video processing to start...\n")
+            
+            # Connect to Kafka
+            try:
+                self.consumer = KafkaConsumer(
+                    self.topic,
+                    bootstrap_servers=[self.kafka_broker],
+                    value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+                    auto_offset_reset='latest',
+                    enable_auto_commit=True,
+                    group_id='benchmark_monitor'
+                )
+            except Exception as e:
+                print(f"❌ Failed to connect to Kafka: {e}")
+                return
+            
+            try:
+                for message in self.consumer:
+                    self.process_message(message)
+            except KeyboardInterrupt:
+                print("\n⏹️  Monitoring stopped by user")
+            except Exception as e:
+                print(f"\n❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                self.save_results()
+                if hasattr(self, 'consumer') and self.consumer:
+                    self.consumer.close()
+        
+    def process_message(self, message):
+            """Process incoming Kafka message"""
+            try:
+                data = message.value
+                camera = data.get('camera', 'unknown')
+                task = data.get('task', 'unknown')
+                timestamp = datetime.now()
+                
+                # Track performance
+                key = f"{camera}_{task}"
+                if key not in self.camera_metrics:
+                    self.camera_metrics[key] = {
+                        'start_time': timestamp,
+                        'frame_count': 0,
+                        'fps_history': deque(maxlen=60)
+                    }
+                
+                self.camera_metrics[key]['frame_count'] += 1
+                elapsed = (timestamp - self.camera_metrics[key]['start_time']).total_seconds()
+                
+                if elapsed > 0:
+                    fps = self.camera_metrics[key]['frame_count'] / elapsed
+                    cpu = psutil.cpu_percent(interval=0.1)
+                    mem = psutil.virtual_memory().percent
+                    
+                    # Print every 10 seconds
+                    if elapsed % 10 < 1:
+                        print(f"[{timestamp.strftime('%H:%M:%S')}] {camera} - {task}: "
+                              f"FPS={fps:.1f}, Frames={self.camera_metrics[key]['frame_count']}, "
+                              f"CPU={cpu:.1f}%, Memory={mem:.1f}%")
+            
+            except Exception as e:
+                print(f"Error processing message: {e}")
+        
+    def save_results(self):
+            """Save benchmark results to JSON files"""
+            output_dir = self.benchmark_dir
+            os.makedirs(output_dir, exist_ok=True)
+            
+            for key, metrics in self.camera_metrics.items():
+                filename = f"{output_dir}/{key}_benchmark.json"
+                try:
+                    with open(filename, 'w') as f:
+                        json.dump({
+                            'camera': key,
+                            'frame_count': metrics['frame_count'],
+                            'start_time': metrics['start_time'].isoformat() if metrics['start_time'] else None
+                        }, f, indent=2)
+                    print(f"✅ Saved {filename}")
+                except Exception as e:
+                    print(f"❌ Error saving {filename}: {e}")
+        
 
 if __name__ == "__main__":
     monitor = EnhancedBenchmarkMonitor()
