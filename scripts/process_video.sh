@@ -675,25 +675,25 @@ select_device_config() {
 get_optimal_decoder() {
     local decode_mode="$1"
     
-    case $decode_mode in
-        GPU)
-            # Intel GPU - use VAAPI
-            echo "vaapih264dec"
-            ;;
-        HYBRID)
-            # Try hardware decoder (NVIDIA or AMD)
-            if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-                echo "nvh264dec"
-            elif command -v vainfo >/dev/null 2>&1 && vainfo 2>/dev/null | grep -q "H264"; then
+    # For Intel GPU (including Arc), use VAAPI
+    if [[ "$decode_mode" == "GPU"* ]]; then
+        # Check if VAAPI is available
+        if command -v vainfo >/dev/null 2>&1; then
+            # Set Arc A770 device
+            export LIBVA_DEVICE=/dev/dri/renderD129
+            export GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
+            
+            if vainfo 2>&1 | grep -q "H264"; then
+                echo "🎬 Using VAAPI hardware decoder (Intel Arc A770)" >&2
                 echo "vaapih264dec"
-            else
-                echo "avdec_h264"
+                return
             fi
-            ;;
-        CPU|*)
-            echo "avdec_h264"
-            ;;
-    esac
+        fi
+    fi
+    
+    # Fallback to software decoder
+    echo "⚠️  Using software decoder" >&2
+    echo "avdec_h264 max-threads=4"
 }
 
 # Function to get optimal inference device
@@ -701,8 +701,12 @@ get_inference_device() {
     local config_mode="$1"
     
     case $config_mode in
-        GPU)
-            # GPU mode means Intel GPU is available and should be used
+        GPU.1)
+            # Intel Arc A770 (second GPU)
+            echo "GPU.1"
+            ;;
+        GPU.0|GPU)
+            # Intel iGPU or generic GPU
             echo "GPU"
             ;;
         HYBRID)
@@ -714,6 +718,7 @@ get_inference_device() {
             ;;
     esac
 }
+
 
 # Function to optimize source pipeline based on device and source type
 optimize_source_pipeline() {
@@ -738,9 +743,17 @@ optimize_source_pipeline() {
                 echo "Using NVIDIA GPU decoder for RTSP" >&2
                 ;;
             vaapih264dec)
+                # Set Arc A770 device if using GPU.1
+                if [[ "$config_mode" == "GPU.1" ]]; then
+                    export LIBVA_DEVICE=/dev/dri/renderD129
+                    export GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
+                    echo "Using VAAPI GPU decoder for RTSP (Intel Arc A770)" >&2
+                else
+                    echo "Using VAAPI GPU decoder for RTSP" >&2
+                fi
                 base_pipeline+="vaapih264dec ! videoconvert ! "
-                echo "Using VAAPI GPU decoder for RTSP" >&2
                 ;;
+
             *)
                 base_pipeline+="avdec_h264 max-threads=4 ! videoconvert ! "
                 echo "Using software decoder for RTSP" >&2
@@ -772,7 +785,7 @@ build_inference_pipeline() {
     local pipeline=""
     
     # Get inference device
-    inference_device=$(get_inference_device "$config_mode")
+    inference_device="$GLOBAL_INFERENCE_DEVICE"
     
     # Create tags for Kafka messages
     local detect_tag="{\\\"camera\\\": \\\"$camera_id\\\", \\\"video\\\": \\\"$video_path\\\", \\\"task\\\": \\\"gvadetect\\\", \\\"config\\\": \\\"$config_mode\\\", \\\"inference_device\\\": \\\"$inference_device\\\"}"
@@ -842,6 +855,30 @@ echo ""
 # Select optimal device configuration
 SELECTED_CONFIG=$(select_device_config "$DEVICE")
 echo "Selected Configuration: $SELECTED_CONFIG"
+
+# ============================================
+# SET GLOBAL INFERENCE DEVICE
+# ============================================
+# Determine inference device based on detected config
+if [[ "$SELECTED_CONFIG" == "GPU.1" ]]; then
+    GLOBAL_INFERENCE_DEVICE="GPU.1"
+    echo "✅ Using Intel Arc A770 (GPU.1) for inference"
+    # Set Arc A770 environment globally
+    export LIBVA_DEVICE=/dev/dri/renderD129
+    export GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
+    echo "🔧 Intel Arc A770 environment configured"
+elif [[ "$SELECTED_CONFIG" == "GPU" ]] || [[ "$SELECTED_CONFIG" == "GPU.0" ]]; then
+    GLOBAL_INFERENCE_DEVICE="GPU"
+    echo "✅ Using GPU for inference"
+else
+    GLOBAL_INFERENCE_DEVICE=$(get_inference_device "$SELECTED_CONFIG")
+    echo "📌 Using $GLOBAL_INFERENCE_DEVICE for inference"
+fi
+
+# Get optimal decoder
+GLOBAL_DECODER=$(get_optimal_decoder "$SELECTED_CONFIG")
+echo "🎬 Using decoder: $GLOBAL_DECODER"
+# ============================================
 
 # Send start boundary messages to Kafka
 echo "Sending start boundary messages to Kafka..."
