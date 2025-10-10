@@ -638,131 +638,59 @@ mkdir -p "$OUTPUT_DIR"
 
 # Function to detect available hardware acceleration
 detect_hardware_acceleration() {
-    local available_devices=()
+    echo "🔍 Detecting optimal hardware device..." >&2
     
-    echo "🔍 Detecting available hardware acceleration..." >&2
+    # Run device detector
+    local detector_output=$(python3 /home/dlstreamer/scripts/device_detector.py --verbose 2>&1)
     
-    # Check for NVIDIA GPU
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        if nvidia-smi >/dev/null 2>&1; then
-            available_devices+=("NVIDIA_GPU")
-            echo "✅ NVIDIA GPU detected" >&2
-        fi
-    fi
+    # Extract device type
+    local detected_device=$(echo "$detector_output" | grep "DEVICE=" | cut -d'=' -f2)
+    local device_info=$(echo "$detector_output" | grep "INFO=" | cut -d'=' -f2)
+    local device_status=$(echo "$detector_output" | grep "STATUS=" | cut -d'=' -f2)
     
-    # Check for Intel GPU (VAAPI)
-    if command -v vainfo >/dev/null 2>&1; then
-        if vainfo 2>/dev/null | grep -q "H264"; then
-            available_devices+=("INTEL_GPU")
-            echo "✅ Intel GPU (VAAPI) detected" >&2
-        fi
-    fi
+    echo "✅ Detected: $device_info" >&2
+    echo "📊 Status: $device_status" >&2
+    echo "🎯 Using device: $detected_device" >&2
     
-    # Check for AMD GPU (VAAPI)
-    if command -v vainfo >/dev/null 2>&1; then
-        if vainfo 2>/dev/null | grep -q "AMD\|Radeon"; then
-            available_devices+=("AMD_GPU")
-            echo "✅ AMD GPU (VAAPI) detected" >&2
-        fi
-    fi
-    
-    # Always have CPU as fallback
-    available_devices+=("CPU")
-    echo "✅ CPU processing available" >&2
-    
-    echo "${available_devices[@]}"
+    echo "$detected_device"
 }
 
 # Function to select optimal device configuration
 select_device_config() {
     local requested_device="$1"
-    local available_devices=($(detect_hardware_acceleration))
     
-    case $requested_device in
-        AUTO)
-            echo "🤖 Auto-selecting optimal device configuration..." >&2
-            # Priority: NVIDIA_GPU > INTEL_GPU > AMD_GPU > CPU
-            for device in "${available_devices[@]}"; do
-                case $device in
-                    NVIDIA_GPU)
-                        echo "HYBRID"  # NVIDIA GPU decode + CPU inference (OpenVINO limitation)
-                        echo "Selected: NVIDIA GPU decoding + CPU inference" >&2
-                        return
-                        ;;
-                    INTEL_GPU)
-                        echo "GPU"  # Intel GPU can do both decode and inference with OpenVINO
-                        echo "Selected: Intel GPU decoding + GPU inference" >&2
-                        return
-                        ;;
-                    AMD_GPU)
-                        echo "HYBRID"  # AMD GPU decode + CPU inference
-                        echo "Selected: AMD GPU decoding + CPU inference" >&2
-                        return
-                        ;;
-                esac
-            done
-            echo "CPU"
-            echo "Selected: CPU-only processing" >&2
-            ;;
-        GPU)
-            # Check if any GPU supports inference
-            for device in "${available_devices[@]}"; do
-                if [[ $device == "INTEL_GPU" ]]; then
-                    echo "GPU"
-                    echo "Selected: Intel GPU for inference" >&2
-                    return
-                fi
-            done
-            echo "Warning: GPU inference requested but only NVIDIA/AMD available, using HYBRID mode" >&2
-            echo "HYBRID"
-            ;;
-        HYBRID)
-            # Check if any GPU is available for decoding
-            for device in "${available_devices[@]}"; do
-                if [[ $device == *"GPU"* ]]; then
-                    echo "HYBRID"
-                    echo "Selected: GPU decoding + CPU inference" >&2
-                    return
-                fi
-            done
-            echo "Warning: HYBRID requested but no GPU available, falling back to CPU" >&2
-            echo "CPU"
-            ;;
-        CPU)
-            echo "CPU"
-            echo "Selected: CPU-only processing" >&2
-            ;;
-        *)
-            echo "Warning: Unknown device '$requested_device', using AUTO" >&2
-            select_device_config "AUTO"
-            ;;
-    esac
+    if [[ "$requested_device" == "AUTO" ]]; then
+        echo "🤖 Auto-selecting optimal device configuration..." >&2
+        
+        # Use device_detector.py to get optimal device
+        local detected_device=$(detect_hardware_acceleration)
+        
+        echo "$detected_device"
+    else
+        echo "📌 Using manually specified device: $requested_device" >&2
+        echo "$requested_device"
+    fi
 }
-
 # Function to get optimal decoder based on available hardware
 get_optimal_decoder() {
     local decode_mode="$1"
-    local available_devices=($(detect_hardware_acceleration))
     
     case $decode_mode in
-        GPU|HYBRID)
-            # Try hardware decoders in priority order
-            for device in "${available_devices[@]}"; do
-                case $device in
-                    NVIDIA_GPU)
-                        echo "nvh264dec"
-                        return
-                        ;;
-                    INTEL_GPU|AMD_GPU)
-                        echo "vaapih264dec"
-                        return
-                        ;;
-                esac
-            done
-            # Fallback to software
-            echo "avdec_h264"
+        GPU)
+            # Intel GPU - use VAAPI
+            echo "vaapih264dec"
             ;;
-        *)
+        HYBRID)
+            # Try hardware decoder (NVIDIA or AMD)
+            if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+                echo "nvh264dec"
+            elif command -v vainfo >/dev/null 2>&1 && vainfo 2>/dev/null | grep -q "H264"; then
+                echo "vaapih264dec"
+            else
+                echo "avdec_h264"
+            fi
+            ;;
+        CPU|*)
             echo "avdec_h264"
             ;;
     esac
@@ -771,21 +699,17 @@ get_optimal_decoder() {
 # Function to get optimal inference device
 get_inference_device() {
     local config_mode="$1"
-    local available_devices=($(detect_hardware_acceleration))
     
     case $config_mode in
         GPU)
-            # Only Intel GPU supports OpenVINO GPU inference reliably
-            for device in "${available_devices[@]}"; do
-                if [[ $device == "INTEL_GPU" ]]; then
-                    echo "GPU"
-                    return
-                fi
-            done
-            # Fallback to CPU if no Intel GPU
+            # GPU mode means Intel GPU is available and should be used
+            echo "GPU"
+            ;;
+        HYBRID)
+            # HYBRID means GPU decode but CPU inference (NVIDIA/AMD)
             echo "CPU"
             ;;
-        HYBRID|CPU|*)
+        CPU|*)
             echo "CPU"
             ;;
     esac
@@ -897,13 +821,23 @@ build_inference_pipeline() {
 }
 
 # Main execution
-echo "=== DLStreamer Video Processing Started ==="
-echo "Videos: ${VIDEO_LIST[*]}"
-echo "Tasks: ${TASK_LIST[*]}"
-echo "Camera IDs: ${CAMERA_LIST[*]}"
-echo "Requested Device: $DEVICE"
-echo "Kafka Broker: $KAFKA_BROKER"
-echo "Kafka Topic: $KAFKA_TOPIC"
+echo "=========================================="
+echo "DLStreamer Universal Pipeline Launcher"
+echo "=========================================="
+echo ""
+echo "🔍 Detecting optimal hardware device..."
+python3 /home/dlstreamer/scripts/device_detector.py --verbose
+echo ""
+echo "📹 Processing Configuration:"
+echo "   Videos: ${VIDEO_LIST[*]}"
+echo "   Tasks: ${TASK_LIST[*]}"
+echo "   Camera IDs: ${CAMERA_LIST[*]}"
+echo "   Device: $DEVICE"
+echo "   Livestream: $LIVESTREAM"
+echo "   Detection Model: $DETECT_MODEL"
+echo "   Pose Model: $POSE_MODEL"
+echo "=========================================="
+echo ""
 
 # Select optimal device configuration
 SELECTED_CONFIG=$(select_device_config "$DEVICE")
