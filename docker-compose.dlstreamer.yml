@@ -242,6 +242,7 @@
 # networks:
 #   dlstreamer_shared_net:
 #     external: true
+
 services:
   zookeeper:
     image: wurstmeister/zookeeper
@@ -277,7 +278,7 @@ services:
       retries: 5
       start_period: 20s
 
-  # Universal Auto-Detection DLStreamer
+  # Universal Auto-Detection DLStreamer (Intel Arc Optimized)
   dlstreamer-auto:
     build: .
     container_name: dlstreamer_auto
@@ -288,7 +289,9 @@ services:
       - ./models:/home/dlstreamer/models
       - ./benchmark_results:/benchmark_results
       - /var/run/docker.sock:/var/run/docker.sock
-      - /dev/dri:/dev/dri
+      - /dev/dri:/dev/dri  # Intel GPU access
+    devices:
+      - /dev/dri:/dev/dri  # Intel GPU device passthrough
     depends_on:
       kafka:
         condition: service_healthy
@@ -299,26 +302,23 @@ services:
     environment:
       - KAFKA_BROKER=kafka:9092
       - GST_DEBUG=2
-      - LIBVA_DRIVER_NAME=iHD
+      - LIBVA_DRIVER_NAME=iHD  # Intel iHD driver for Arc
       - GST_VAAPI_ALL_DRIVERS=1
+      - LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
       - DISPLAY=${DISPLAY:-:0}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     command: >
       bash -c "
-      echo 'Starting Universal Auto-Detection DLStreamer...' &&
-      echo 'Hardware Detection Results:' &&
-      echo '   VAAPI Support:' &&
-      (vainfo 2>/dev/null | head -5 || echo '   No VAAPI support detected') &&
-      echo '   NVIDIA GPU:' &&
-      (nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo '   No NVIDIA GPU detected') &&
-      echo '   Starting pipeline in 15 seconds...' &&
+      echo '========================================' &&
+      echo '🚀 Starting Universal DLStreamer Pipeline' &&
+      echo '========================================' &&
+      echo '' &&
+      echo '📊 Hardware Detection:' &&
+      python3 /home/dlstreamer/scripts/device_detector.py --verbose &&
+      echo '' &&
+      echo '⏳ Waiting for Kafka to be ready...' &&
       sleep 15 &&
+      echo '' &&
+      echo '🎬 Launching video processing pipeline...' &&
       chmod +x /home/dlstreamer/scripts/process_video.sh &&
       /home/dlstreamer/scripts/process_video.sh 
       --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
@@ -327,10 +327,9 @@ services:
       --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
       --camera-id 'cam0,cam2,cam4,cam6' 
       --device 'AUTO'
-      --livestream 'true'
       "
 
-  # CPU-only version
+  # CPU-only version (fallback)
   dlstreamer-cpu:
     build: .
     container_name: dlstreamer_cpu
@@ -352,7 +351,7 @@ services:
       - GST_DEBUG=2
     command: >
       bash -c "
-      echo 'Starting CPU-only DLStreamer...' &&
+      echo '🚀 Starting CPU-only DLStreamer...' &&
       sleep 15 &&
       chmod +x /home/dlstreamer/scripts/process_video.sh &&
       /home/dlstreamer/scripts/process_video.sh 
@@ -365,7 +364,52 @@ services:
       --livestream 'true'
       "
 
-  # Enhanced Universal Benchmark Monitor
+  # Intel GPU-only version (explicit)
+  dlstreamer-gpu:
+    build: .
+    container_name: dlstreamer_gpu
+    profiles: ["gpu"]
+    volumes:
+      - ./scripts:/home/dlstreamer/scripts
+      - ./videos:/home/dlstreamer/videos
+      - ./models:/home/dlstreamer/models
+      - ./benchmark_results:/benchmark_results
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/dri:/dev/dri
+    devices:
+      - /dev/dri:/dev/dri
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - dlstreamer_shared_net
+    restart: unless-stopped
+    privileged: true
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - GST_DEBUG=2
+      - LIBVA_DRIVER_NAME=iHD
+      - GST_VAAPI_ALL_DRIVERS=1
+      - LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
+    command: >
+      bash -c "
+      echo '🚀 Starting Intel GPU-accelerated DLStreamer...' &&
+      echo '📊 Verifying Intel GPU access...' &&
+      vainfo &&
+      clinfo | grep 'Intel' &&
+      sleep 15 &&
+      chmod +x /home/dlstreamer/scripts/process_video.sh &&
+      /home/dlstreamer/scripts/process_video.sh 
+      --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
+      --tasks 'gvadetect,gvapose' 
+      --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
+      --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
+      --camera-id 'cam0,cam2,cam4,cam6' 
+      --device 'GPU'
+      --livestream 'true'
+      "
+
+  # Enhanced Universal Benchmark Monitor (Intel Arc Optimized)
   benchmark-monitor:
     image: python:3.9-slim
     container_name: benchmark_monitor
@@ -375,6 +419,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      - /dev/dri:/dev/dri  # Intel GPU access for monitoring
+    devices:
       - /dev/dri:/dev/dri
     depends_on:
       kafka:
@@ -388,26 +434,20 @@ services:
       - PYTHONUNBUFFERED=1
       - LIBVA_DRIVER_NAME=iHD
       - GST_VAAPI_ALL_DRIVERS=1
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     command: >
       bash -c "
-      echo 'Starting Universal Benchmark Monitor...' &&
-      apt-get update && apt-get install -y procps vainfo mesa-va-drivers intel-media-va-driver netcat-openbsd &&
-      pip install kafka-python psutil docker &&
-      echo 'System Hardware Detection:' &&
-      echo '   CPU Info:' &&
-      (cat /proc/cpuinfo | grep 'model name' | head -1 || echo '   CPU info not available') &&
-      echo '   Memory Info:' &&
-      (free -h | head -2 || echo '   Memory info not available') &&
-      echo '   GPU Detection:' &&
-      (vainfo 2>/dev/null | head -3 || echo '   No VAAPI GPU detected') &&
-      echo '   Starting monitoring...' &&
+      echo '========================================' &&
+      echo '📊 Starting Benchmark Monitor' &&
+      echo '========================================' &&
+      apt-get update -qq && apt-get install -y -qq procps netcat-openbsd > /dev/null 2>&1 &&
+      pip install -q kafka-python psutil docker &&
+      echo '' &&
+      echo '💻 System Hardware:' &&
+      cat /proc/cpuinfo | grep 'model name' | head -1 | sed 's/model name.*: /  CPU: /' &&
+      free -h | awk 'NR==2{printf \"  Memory: %s total, %s available\\n\", \$2, \$7}' &&
+      echo '' &&
+      echo '🔍 Starting performance monitoring...' &&
+      echo '========================================' &&
       python /app/benchmark_monitor.py
       "
 
