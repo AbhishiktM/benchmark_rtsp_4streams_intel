@@ -1126,14 +1126,14 @@ for i in "${!VIDEO_LIST[@]}"; do
         
         # Detection branch
         pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
-        pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"GPU.1\" pre-process-backend=ie ! "
+        pipeline+="gvadetect model="$DETECT_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=ie"
         pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
         
         # Pose branch
         pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
-        pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"GPU.1\" pre-process-backend=opencv ! "
+        pipeline+="gvadetect model="$POSE_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=opencv"
         pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
@@ -1141,7 +1141,7 @@ for i in "${!VIDEO_LIST[@]}"; do
     elif $RUN_DETECT; then
         # Detection only
         pipeline="$source_pipeline "
-        pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"GPU.1\" pre-process-backend=ie ! "
+        pipeline+="gvadetect model="$DETECT_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=ie"
         pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
@@ -1149,7 +1149,7 @@ for i in "${!VIDEO_LIST[@]}"; do
     elif $RUN_POSE; then
         # Pose only
         pipeline="$source_pipeline "
-        pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"GPU.1\" pre-process-backend=opencv ! "
+        pipeline+="gvadetect model="$POSE_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=opencv"
         pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
