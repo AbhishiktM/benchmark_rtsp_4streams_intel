@@ -97,6 +97,8 @@ WORKDIR /home/dlstreamer
 # Update package lists and install ALL necessary dependencies
 RUN apt-get update && \
     apt-get install -y \
+    pciutils \
+    clinfo \
     python3-pip \
     python3-dev \
     wget \
