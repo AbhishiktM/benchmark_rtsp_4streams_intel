@@ -279,7 +279,7 @@ services:
       start_period: 20s
 
   # Universal Auto-Detection DLStreamer (Intel Arc Optimized)
-  dlstreamer-auto:
+    dlstreamer-auto:
     build: .
     container_name: dlstreamer_auto
     profiles: ["auto"]
@@ -289,20 +289,20 @@ services:
       - ./models:/home/dlstreamer/models
       - ./benchmark_results:/benchmark_results
       - /var/run/docker.sock:/var/run/docker.sock
-      - /dev/dri:/dev/dri  # Intel GPU access
+      - /dev/dri:/dev/dri  # ✅ Intel GPU access
     devices:
-      - /dev/dri:/dev/dri  # Intel GPU device passthrough
+      - /dev/dri:/dev/dri  # ✅ Device passthrough
     depends_on:
       kafka:
         condition: service_healthy
     networks:
       - dlstreamer_shared_net
     restart: unless-stopped
-    privileged: true
+    privileged: true  # ✅ Required for GPU access
     environment:
       - KAFKA_BROKER=kafka:9092
       - GST_DEBUG=2
-      - LIBVA_DRIVER_NAME=iHD  # Intel iHD driver for Arc
+      - LIBVA_DRIVER_NAME=iHD  # ✅ Intel iHD driver
       - GST_VAAPI_ALL_DRIVERS=1
       - LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
       - DISPLAY=${DISPLAY:-:0}
