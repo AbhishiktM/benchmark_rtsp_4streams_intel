@@ -49,21 +49,23 @@ class DeviceDetector:
             'intel_igpu_available': False,
             'amd_available': False,
             'devices': [],
-            'recommended_device': 'CPU'
+            'recommended_device': 'CPU',
+            'arc_device_path': None  # ✅ Add this
         }
         
         # Check for Intel Arc GPU specifically
         intel_arc_detected = self._detect_intel_arc()
         if intel_arc_detected:
             gpu_info['intel_arc_available'] = True
+            gpu_info['arc_device_path'] = '/dev/dri/renderD129'  # ✅ Add this
             gpu_info['devices'].append({
                 'vendor': 'Intel',
                 'type': 'Arc',
-                'name': intel_arc_detected
+                'name': intel_arc_detected,
+                'device_path': '/dev/dri/renderD129'  # ✅ Add this
             })
             gpu_info['recommended_device'] = 'GPU'
-            return gpu_info
-        
+            return gpu_info    
         # Check for Intel iGPU (integrated graphics)
         intel_igpu_detected = self._detect_intel_igpu()
         if intel_igpu_detected:
@@ -110,16 +112,15 @@ class DeviceDetector:
     def _detect_intel_arc(self):
         """Specifically detect Intel Arc GPU"""
         try:
-            # Method 1: Check lspci for DG2 (Arc codename)
-            result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=5)
+            # Method 1: Check lspci for DG2 (Arc codename) or device 5690
+            result = subprocess.run(['lspci', '-nn'], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 for line in result.stdout.split('\n'):
                     if 'VGA' in line or 'Display' in line:
                         line_lower = line.lower()
-                        # Intel Arc GPUs use DG2 architecture
-                        if 'dg2' in line_lower or 'arc' in line_lower:
-                            # Extract GPU model
-                            if 'a770' in line_lower:
+                        # Intel Arc A770 has device ID 5690
+                        if '5690' in line or 'dg2' in line_lower or 'arc' in line_lower:
+                            if 'a770' in line_lower or '5690' in line:
                                 return 'Intel Arc A770'
                             elif 'a750' in line_lower:
                                 return 'Intel Arc A750'
@@ -127,39 +128,30 @@ class DeviceDetector:
                                 return 'Intel Arc A580'
                             elif 'a380' in line_lower:
                                 return 'Intel Arc A380'
-                            elif 'a310' in line_lower:
-                                return 'Intel Arc A310'
                             else:
                                 return 'Intel Arc GPU'
             
-            # Method 2: Check clinfo for Arc
-            result = subprocess.run(['clinfo'], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                output = result.stdout.lower()
-                if 'arc' in output and 'intel' in output:
-                    if 'a770' in output:
-                        return 'Intel Arc A770'
-                    elif 'a750' in output:
-                        return 'Intel Arc A750'
-                    elif 'a580' in output:
-                        return 'Intel Arc A580'
-                    elif 'a380' in output:
-                        return 'Intel Arc A380'
-                    else:
-                        return 'Intel Arc GPU'
+            # Method 2: Check vainfo for AV1 encode support (Arc-specific)
+            # Use renderD129 for Arc A770 (renderD128 is iGPU)
+            env = os.environ.copy()
+            env['LIBVA_DEVICE'] = '/dev/dri/renderD129'
             
-            # Method 3: Check vainfo for Arc-specific features
-            result = subprocess.run(['vainfo'], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(['vainfo'], 
+                                  capture_output=True, 
+                                  text=True, 
+                                  timeout=5,
+                                  env=env)
             if result.returncode == 0:
                 output = result.stdout
-                # Arc GPUs support AV1 encode, older iGPUs don't
-                if 'VAProfileAV1' in output and 'VAEntrypointEncSlice' in output:
-                    return 'Intel Arc GPU (detected via AV1 encode support)'
+                # Arc GPUs support AV1 decode, older iGPUs don't
+                if 'VAProfileAV1Profile0' in output and 'VAEntrypointVLD' in output:
+                    return 'Intel Arc GPU (detected via AV1 support on renderD129)'
             
             return None
             
         except Exception as e:
             return None
+
     
     def _detect_intel_igpu(self):
         """Detect Intel integrated GPU (not Arc)"""
