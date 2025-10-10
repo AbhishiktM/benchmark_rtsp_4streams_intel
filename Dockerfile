@@ -111,6 +111,10 @@ RUN apt-get update && \
     i965-va-driver \
     netcat-openbsd \
     procps \
+    intel-opencl-icd \
+    ocl-icd-libopencl1 \
+    intel-level-zero-gpu \
+    level-zero \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
