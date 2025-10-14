@@ -52,15 +52,14 @@ version: '3.8'
 
 services:
   # ============================================
-  # RTSP SERVER (MediaMTX)
+  # RTSP SERVER
   # ============================================
   rtsp-server:
     image: bluenviron/mediamtx:latest
     container_name: rtsp-server
     ports:
-      - "8554:8554"  # RTSP port
-      - "8888:8888"  # HLS/API port
-      - "8889:8889"  # WebRTC port
+      - "8554:8554"
+      - "8888:8888"
     networks:
       - dlstreamer_net
     restart: unless-stopped
@@ -73,7 +72,7 @@ services:
       retries: 3
 
   # ============================================
-  # CAMERA FEEDERS (FFmpeg)
+  # SINGLE CAMERA FEEDER (cam0 only)
   # ============================================
   cam0-feeder:
     image: jrottenberg/ffmpeg:5.1-alpine
@@ -86,75 +85,22 @@ services:
       rtsp-server:
         condition: service_healthy
     restart: unless-stopped
-    command: >
-      -re -stream_loop -1 -i /videos/cam0_h264.mp4
-      -c copy
-      -f rtsp
-      -rtsp_transport tcp
-      rtsp://rtsp-server:8554/cam0
-
-  cam2-feeder:
-    image: jrottenberg/ffmpeg:5.1-alpine
-    container_name: cam2-feeder
-    volumes:
-      - ./videos:/videos:ro
-    networks:
-      - dlstreamer_net
-    depends_on:
-      rtsp-server:
-        condition: service_healthy
-    restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command: >
-      "sleep 5 &&
-      ffmpeg -re -stream_loop -1 -i /videos/cam2_h264.mp4
-      -c copy
+      "echo 'Waiting for RTSP server...' &&
+      sleep 10 &&
+      echo 'Checking video file...' &&
+      ls -lh /videos/cam0_h264.mp4 &&
+      echo 'Starting cam0 stream...' &&
+      ffmpeg -re -stream_loop -1 
+      -i /videos/cam0_h264.mp4
+      -c:v copy
       -f rtsp
       -rtsp_transport tcp
-      rtsp://rtsp-server:8554/cam2"
-
-  cam4-feeder:
-    image: jrottenberg/ffmpeg:5.1-alpine
-    container_name: cam4-feeder
-    volumes:
-      - ./videos:/videos:ro
-    networks:
-      - dlstreamer_net
-    depends_on:
-      rtsp-server:
-        condition: service_healthy
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      "sleep 10 &&
-      ffmpeg -re -stream_loop -1 -i /videos/cam4_h264.mp4
-      -c copy
-      -f rtsp
-      -rtsp_transport tcp
-      rtsp://rtsp-server:8554/cam4"
-
-  cam6-feeder:
-    image: jrottenberg/ffmpeg:5.1-alpine
-    container_name: cam6-feeder
-    volumes:
-      - ./videos:/videos:ro
-    networks:
-      - dlstreamer_net
-    depends_on:
-      rtsp-server:
-        condition: service_healthy
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      "sleep 15 &&
-      ffmpeg -re -stream_loop -1 -i /videos/cam6_h264.mp4
-      -c copy
-      -f rtsp
-      -rtsp_transport tcp
-      rtsp://rtsp-server:8554/cam6"
+      rtsp://rtsp-server:8554/cam0"
 
   # ============================================
-  # KAFKA INFRASTRUCTURE
+  # KAFKA
   # ============================================
   zookeeper:
     image: wurstmeister/zookeeper:latest
@@ -164,9 +110,6 @@ services:
     networks:
       - dlstreamer_net
     restart: unless-stopped
-    environment:
-      - ZOOKEEPER_CLIENT_PORT=2181
-      - ZOOKEEPER_TICK_TIME=2000
 
   kafka:
     image: wurstmeister/kafka:latest
@@ -174,28 +117,17 @@ services:
     ports:
       - "9092:9092"
     environment:
-      # Kafka broker configuration
       - KAFKA_BROKER_ID=1
       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
       - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
-      # Topic configuration
       - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
-      - KAFKA_DELETE_TOPIC_ENABLE=true
-      - KAFKA_CREATE_TOPICS=dlstreamer-output:4:1
-      # Performance tuning
-      - KAFKA_NUM_PARTITIONS=4
+      - KAFKA_CREATE_TOPICS=dlstreamer-output:1:1
+      - KAFKA_NUM_PARTITIONS=1
       - KAFKA_DEFAULT_REPLICATION_FACTOR=1
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
-      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
-      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
-      # Log configuration
-      - KAFKA_LOG_RETENTION_HOURS=24
-      - KAFKA_LOG_SEGMENT_BYTES=1073741824
-      - KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS=300000
-      # JVM settings
       - KAFKA_HEAP_OPTS=-Xmx512M -Xms256M
     volumes:
       - kafka_data:/kafka
@@ -212,7 +144,7 @@ services:
       start_period: 30s
 
   # ============================================
-  # DLSTREAMER (Intel Arc A770)
+  # DLSTREAMER (Single stream, single model)
   # ============================================
   dlstreamer:
     build: .
@@ -233,50 +165,39 @@ services:
         condition: service_healthy
       cam0-feeder:
         condition: service_started
-      cam2-feeder:
-        condition: service_started
-      cam4-feeder:
-        condition: service_started
-      cam6-feeder:
-        condition: service_started
     networks:
       - dlstreamer_net
     restart: unless-stopped
     privileged: true
     environment:
-      # Kafka configuration
       - KAFKA_BROKER=kafka:9092
-      # Intel Arc A770 GPU configuration
       - LIBVA_DEVICE=/dev/dri/renderD129
       - GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
       - LIBVA_DRIVER_NAME=iHD
       - GST_VAAPI_ALL_DRIVERS=1
       - LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
-      # OpenVINO GPU configuration
       - GPU_DEVICE_ORDINAL=1
-      # GStreamer debug
       - GST_DEBUG=2
       - DISPLAY=${DISPLAY:-:0}
     command: >
       bash -c "
       echo '========================================' &&
-      echo '🚀 Intel Arc A770 DLStreamer Pipeline' &&
+      echo '🚀 Intel Arc A770 - Single Stream Test' &&
       echo '========================================' &&
       echo '' &&
       echo '📊 Hardware Detection:' &&
       python3 /home/dlstreamer/scripts/device_detector.py --verbose &&
       echo '' &&
-      echo '⏳ Waiting for RTSP streams to be ready...' &&
+      echo '⏳ Waiting for stream...' &&
       sleep 30 &&
       echo '' &&
-      echo '🎬 Launching pipeline...' &&
+      echo '🎬 Launching SINGLE STREAM pipeline...' &&
       chmod +x /home/dlstreamer/scripts/process_video.sh &&
       /home/dlstreamer/scripts/process_video.sh 
-      --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
-      --tasks 'gvadetect,gvapose' 
+      --video 'rtsp://rtsp-server:8554/cam0' 
+      --tasks 'gvadetect' 
       --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
-      --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
-      --camera-id 'cam0,cam2,cam4,cam6' 
+      --camera-id 'cam0' 
       --device 'GPU.1'
       "
 
@@ -302,7 +223,7 @@ services:
     privileged: true
     environment:
       - KAFKA_BROKER=kafka:9092
-      - KAFKA_TOPIC=dlstreamer-output 
+      - KAFKA_TOPIC=dlstreamer-output
       - PYTHONUNBUFFERED=1
       - LIBVA_DRIVER_NAME=iHD
     command: >
@@ -312,7 +233,6 @@ services:
       pip install -q kafka-python psutil docker &&
       python /app/benchmark_monitor.py
       "
-
 
 networks:
   dlstreamer_net:
