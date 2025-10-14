@@ -94,61 +94,41 @@ USER root
 
 WORKDIR /home/dlstreamer
 
-# Update package lists and install ALL necessary dependencies
-RUN apt-get update && \
-    apt-get install -y \
-    pciutils \
-    clinfo \
-    python3-pip \
-    python3-dev \
-# Install ALL required dependencies for Intel Arc A770
+# Add Intel Graphics repository for Arc A770 support
+RUN wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
+    gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy arc" | \
+    tee /etc/apt/sources.list.d/intel-graphics.list
+
+# Install system dependencies for Intel Arc A770
 RUN apt-get update && apt-get install -y \
-    # Core utilities
-    pciutils \
-    wget \
-    curl \
-    gnupg2 \
-    software-properties-common \
-    netcat-openbsd \
-    procps \
-    # Intel GPU drivers and tools
+    # GPU drivers and libraries
     intel-opencl-icd \
     ocl-icd-libopencl1 \
     intel-level-zero-gpu \
     level-zero \
+    intel-media-va-driver-non-free \
+    vainfo \
     clinfo \
     # VAAPI support
-    vainfo \
-    intel-media-va-driver \
-    mesa-va-drivers \
-    i965-va-driver \
-    netcat-openbsd \
-    procps \
-    intel-opencl-icd \
-    ocl-icd-libopencl1 \
-    intel-level-zero-gpu \
-    level-zero \
-    && apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install Python packages
-RUN python3 -m pip install kafka-python numpy psutil docker --break-system-packages
-
-# Install ALL GStreamer plugins for maximum compatibility
-RUN apt-get update && \
-    apt-get install -y \
-    gstreamer1.0-plugins-bad \
     libva-drm2 \
     libva-x11-2 \
+    mesa-va-drivers \
     # GStreamer plugins
     gstreamer1.0-vaapi \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
     gstreamer1.0-plugins-good \
     gstreamer1.0-libav \
-    # Python dependencies
+    # Utilities
+    pciutils \
     python3-pip \
     python3-dev \
+    netcat-openbsd \
+    procps \
+    wget \
+    curl \
+    gnupg2 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -160,7 +140,7 @@ RUN python3 -m pip install --no-cache-dir \
     docker \
     --break-system-packages
 
-# Create necessary directories
+# Create directories
 RUN mkdir -p \
     /home/dlstreamer/scripts \
     /home/dlstreamer/models \
@@ -171,13 +151,7 @@ RUN mkdir -p \
 RUN chown -R dlstreamer:dlstreamer /home/dlstreamer && \
     chown -R dlstreamer:dlstreamer /benchmark_results
 
-# Switch to dlstreamer user
 USER dlstreamer
-
-# Set environment variables for Intel Arc A770
-ENV LIBVA_DRIVER_NAME=iHD \
-    GST_VAAPI_ALL_DRIVERS=1 \
-    LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
 
 VOLUME ["/home/dlstreamer/scripts", "/home/dlstreamer/models", "/home/dlstreamer/videos"]
 
