@@ -1376,7 +1376,7 @@ set -e
 # Default values
 DEVICE="GPU.1"
 KAFKA_BROKER="${KAFKA_BROKER:-kafka:9092}"
-KAFKA_TOPIC="dlstreamer_output"
+KAFKA_TOPIC="dlstreamer-output"
 DETECT_MODEL=""
 POSE_MODEL=""
 VIDEO_LIST=()

@@ -946,7 +946,7 @@ class UniversalSystemProfiler:
         print("\n" + "="*70)
 
 class EnhancedBenchmarkMonitor:
-    def __init__(self, kafka_broker="kafka:9092", topic="dlstreamer_output"):
+    def __init__(self, kafka_broker="kafka:9092", topic="dlstreamer-output"):
         self.kafka_broker = kafka_broker
         self.topic = topic
         self.benchmark_dir = "/benchmark_results"
