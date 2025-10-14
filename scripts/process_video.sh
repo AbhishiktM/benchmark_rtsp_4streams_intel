@@ -653,6 +653,39 @@
 #     echo "🎯 Using device: $detected_device" >&2
     
 #     echo "$detected_device"
+#     local available_devices=()
+    
+#     echo "🔍 Detecting available hardware acceleration..." >&2
+    
+#     # Check for NVIDIA GPU
+#     if command -v nvidia-smi >/dev/null 2>&1; then
+#         if nvidia-smi >/dev/null 2>&1; then
+#             available_devices+=("NVIDIA_GPU")
+#             echo "✅ NVIDIA GPU detected" >&2
+#         fi
+#     fi
+    
+#     # Check for Intel GPU (VAAPI)
+#     if command -v vainfo >/dev/null 2>&1; then
+#         if vainfo 2>/dev/null | grep -q "H264"; then
+#             available_devices+=("INTEL_GPU")
+#             echo "✅ Intel GPU (VAAPI) detected" >&2
+#         fi
+#     fi
+    
+#     # Check for AMD GPU (VAAPI)
+#     if command -v vainfo >/dev/null 2>&1; then
+#         if vainfo 2>/dev/null | grep -q "AMD\|Radeon"; then
+#             available_devices+=("AMD_GPU")
+#             echo "✅ AMD GPU (VAAPI) detected" >&2
+#         fi
+#     fi
+    
+#     # Always have CPU as fallback
+#     available_devices+=("CPU")
+#     echo "✅ CPU processing available" >&2
+    
+#     echo "${available_devices[@]}"
 # }
 
 # # Function to select optimal device configuration
@@ -694,6 +727,96 @@
 #     # Fallback to software decoder
 #     echo "⚠️  Using software decoder" >&2
 #     echo "avdec_h264 max-threads=4"
+#     local available_devices=($(detect_hardware_acceleration))
+    
+#     case $requested_device in
+#         AUTO)
+#             echo "🤖 Auto-selecting optimal device configuration..." >&2
+#             # Priority: NVIDIA_GPU > INTEL_GPU > AMD_GPU > CPU
+#             for device in "${available_devices[@]}"; do
+#                 case $device in
+#                     NVIDIA_GPU)
+#                         echo "HYBRID"  # NVIDIA GPU decode + CPU inference (OpenVINO limitation)
+#                         echo "Selected: NVIDIA GPU decoding + CPU inference" >&2
+#                         return
+#                         ;;
+#                     INTEL_GPU)
+#                         echo "GPU"  # Intel GPU can do both decode and inference with OpenVINO
+#                         echo "Selected: Intel GPU decoding + GPU inference" >&2
+#                         return
+#                         ;;
+#                     AMD_GPU)
+#                         echo "HYBRID"  # AMD GPU decode + CPU inference
+#                         echo "Selected: AMD GPU decoding + CPU inference" >&2
+#                         return
+#                         ;;
+#                 esac
+#             done
+#             echo "CPU"
+#             echo "Selected: CPU-only processing" >&2
+#             ;;
+#         GPU)
+#             # Check if any GPU supports inference
+#             for device in "${available_devices[@]}"; do
+#                 if [[ $device == "INTEL_GPU" ]]; then
+#                     echo "GPU"
+#                     echo "Selected: Intel GPU for inference" >&2
+#                     return
+#                 fi
+#             done
+#             echo "Warning: GPU inference requested but only NVIDIA/AMD available, using HYBRID mode" >&2
+#             echo "HYBRID"
+#             ;;
+#         HYBRID)
+#             # Check if any GPU is available for decoding
+#             for device in "${available_devices[@]}"; do
+#                 if [[ $device == *"GPU"* ]]; then
+#                     echo "HYBRID"
+#                     echo "Selected: GPU decoding + CPU inference" >&2
+#                     return
+#                 fi
+#             done
+#             echo "Warning: HYBRID requested but no GPU available, falling back to CPU" >&2
+#             echo "CPU"
+#             ;;
+#         CPU)
+#             echo "CPU"
+#             echo "Selected: CPU-only processing" >&2
+#             ;;
+#         *)
+#             echo "Warning: Unknown device '$requested_device', using AUTO" >&2
+#             select_device_config "AUTO"
+#             ;;
+#     esac
+# }
+
+# # Function to get optimal decoder based on available hardware
+# get_optimal_decoder() {
+#     local decode_mode="$1"
+#     local available_devices=($(detect_hardware_acceleration))
+    
+#     case $decode_mode in
+#         GPU|HYBRID)
+#             # Try hardware decoders in priority order
+#             for device in "${available_devices[@]}"; do
+#                 case $device in
+#                     NVIDIA_GPU)
+#                         echo "nvh264dec"
+#                         return
+#                         ;;
+#                     INTEL_GPU|AMD_GPU)
+#                         echo "vaapih264dec"
+#                         return
+#                         ;;
+#                 esac
+#             done
+#             # Fallback to software
+#             echo "avdec_h264"
+#             ;;
+#         *)
+#             echo "avdec_h264"
+#             ;;
+#     esac
 # }
 
 # # Function to get optimal inference device
@@ -714,6 +837,21 @@
 #             echo "CPU"
 #             ;;
 #         CPU|*)
+#     local available_devices=($(detect_hardware_acceleration))
+    
+#     case $config_mode in
+#         GPU)
+#             # Only Intel GPU supports OpenVINO GPU inference reliably
+#             for device in "${available_devices[@]}"; do
+#                 if [[ $device == "INTEL_GPU" ]]; then
+#                     echo "GPU"
+#                     return
+#                 fi
+#             done
+#             # Fallback to CPU if no Intel GPU
+#             echo "CPU"
+#             ;;
+#         HYBRID|CPU|*)
 #             echo "CPU"
 #             ;;
 #     esac
@@ -997,7 +1135,243 @@
 # Intel Arc A770 Hardcoded DLStreamer Pipeline
 # ============================================
 
+
+# # Function to optimize source pipeline based on device and source type
+# optimize_source_pipeline() {
+#     local video_path="$1"
+#     local config_mode="$2"
+#     local base_pipeline=""
+    
+#     if [[ "$video_path" == rtsp://* ]]; then
+#         echo "Setting up RTSP source for: $video_path (Config: $config_mode)" >&2
+        
+#         # RTSP stream - use rtspsrc with optimizations
+#         base_pipeline="rtspsrc location=\"$video_path\" "
+#         base_pipeline+="latency=0 buffer-mode=auto drop-on-latency=true "
+#         base_pipeline+="protocols=tcp timeout=5000000 retry=3 ! "
+#         base_pipeline+="rtph264depay ! h264parse ! "
+        
+#         # Get optimal decoder
+#         decoder=$(get_optimal_decoder "$config_mode")
+#         case $decoder in
+#             nvh264dec)
+#                 base_pipeline+="nvh264dec ! videoconvert ! "
+#                 echo "Using NVIDIA GPU decoder for RTSP" >&2
+#                 ;;
+#             vaapih264dec)
+#                 base_pipeline+="vaapih264dec ! videoconvert ! "
+#                 echo "Using VAAPI GPU decoder for RTSP" >&2
+#                 ;;
+#             *)
+#                 base_pipeline+="avdec_h264 max-threads=4 ! videoconvert ! "
+#                 echo "Using software decoder for RTSP" >&2
+#                 ;;
+#         esac
+        
+#     elif [[ "$video_path" == http://* ]] || [[ "$video_path" == https://* ]]; then
+#         echo "Setting up HTTP source for: $video_path" >&2
+#         base_pipeline="souphttpsrc location=\"$video_path\" ! decodebin ! videoconvert ! "
+        
+#     else
+#         echo "Setting up file source for: $video_path" >&2
+#         if [[ ! -f "$video_path" ]]; then
+#             echo "Error: Video file not found: $video_path" >&2
+#             exit 1
+#         fi
+#         base_pipeline="filesrc location=\"$video_path\" ! decodebin ! videoconvert ! "
+#     fi
+    
+#     echo "$base_pipeline"
+# }
+
+# # Function to build inference pipeline with device selection
+# build_inference_pipeline() {
+#     local source_pipeline="$1"
+#     local camera_id="$2"
+#     local video_path="$3"
+#     local config_mode="$4"
+#     local pipeline=""
+    
+#     # Get inference device
+#     inference_device=$(get_inference_device "$config_mode")
+    
+#     # Create tags for Kafka messages
+#     local detect_tag="{\\\"camera\\\": \\\"$camera_id\\\", \\\"video\\\": \\\"$video_path\\\", \\\"task\\\": \\\"gvadetect\\\", \\\"config\\\": \\\"$config_mode\\\", \\\"inference_device\\\": \\\"$inference_device\\\"}"
+#     local pose_tag="{\\\"camera\\\": \\\"$camera_id\\\", \\\"video\\\": \\\"$video_path\\\", \\\"task\\\": \\\"gvapose\\\", \\\"config\\\": \\\"$config_mode\\\", \\\"inference_device\\\": \\\"$inference_device\\\"}"
+    
+#     if $RUN_DETECT && $RUN_POSE; then
+#         echo "Building combined detection and pose pipeline for $camera_id (Config: $config_mode, Inference: $inference_device)" >&2
+        
+#         # Combined pipeline with tee for branching
+#         pipeline="$source_pipeline tee name=t_$camera_id "
+        
+#         # Detection branch
+#         pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
+#         pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"$inference_device\" pre-process-backend=ie ! "
+#         pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
+#         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
+#         pipeline+="fakesink sync=false "
+        
+#         # Pose branch
+#         pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
+#         pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"$inference_device\" pre-process-backend=opencv ! "
+#         pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
+#         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
+#         pipeline+="fakesink sync=false "
+        
+#     elif $RUN_DETECT; then
+#         echo "Building detection-only pipeline for $camera_id (Config: $config_mode, Inference: $inference_device)" >&2
+        
+#         pipeline="$source_pipeline "
+#         pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"$inference_device\" pre-process-backend=ie ! "
+#         pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
+#         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
+#         pipeline+="fakesink sync=false "
+        
+#     elif $RUN_POSE; then
+#         echo "Building pose-only pipeline for $camera_id (Config: $config_mode, Inference: $inference_device)" >&2
+        
+#         pipeline="$source_pipeline "
+#         pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"$inference_device\" pre-process-backend=opencv ! "
+#         pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
+#         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
+#         pipeline+="fakesink sync=false "
+#     fi
+    
+#     echo "$pipeline"
+# }
+
+# # Main execution
+# echo "=== DLStreamer Video Processing Started ==="
+# echo "Videos: ${VIDEO_LIST[*]}"
+# echo "Tasks: ${TASK_LIST[*]}"
+# echo "Camera IDs: ${CAMERA_LIST[*]}"
+# echo "Requested Device: $DEVICE"
+# echo "Kafka Broker: $KAFKA_BROKER"
+# echo "Kafka Topic: $KAFKA_TOPIC"
+
+# # Select optimal device configuration
+# SELECTED_CONFIG=$(select_device_config "$DEVICE")
+# echo "Selected Configuration: $SELECTED_CONFIG"
+
+# # Send start boundary messages to Kafka
+# echo "Sending start boundary messages to Kafka..."
+# for i in "${!VIDEO_LIST[@]}"; do
+#     VIDEO_PATH="${VIDEO_LIST[$i]}"
+#     CAM_ID="${CAMERA_LIST[$i]}"
+    
+#     if $RUN_DETECT; then
+#         python3 ./scripts/define_video_boundary_kafka.py \
+#             --video "$VIDEO_PATH" \
+#             --task "gvadetect" \
+#             --status "start" \
+#             --camera "$CAM_ID" \
+#             --kafka-broker "$KAFKA_BROKER" \
+#             --kafka-topic "$KAFKA_TOPIC" || echo "Warning: Could not send detect start boundary for $CAM_ID"
+#     fi
+    
+#     if $RUN_POSE; then
+#         python3 ./scripts/define_video_boundary_kafka.py \
+#             --video "$VIDEO_PATH" \
+#             --task "gvapose" \
+#             --status "start" \
+#             --camera "$CAM_ID" \
+#             --kafka-broker "$KAFKA_BROKER" \
+#             --kafka-topic "$KAFKA_TOPIC" || echo "Warning: Could not send pose start boundary for $CAM_ID"
+#     fi
+# done
+
+# # Build and execute pipelines
+# if [[ ${#VIDEO_LIST[@]} -eq 1 ]]; then
+#     # Single video processing
+#     VIDEO_PATH="${VIDEO_LIST[0]}"
+#     CAM_ID="${CAMERA_LIST[0]}"
+    
+#     echo "Processing single video: $VIDEO_PATH (Camera: $CAM_ID, Config: $SELECTED_CONFIG)"
+    
+#     SOURCE_PIPELINE=$(optimize_source_pipeline "$VIDEO_PATH" "$SELECTED_CONFIG")
+#     FULL_PIPELINE=$(build_inference_pipeline "$SOURCE_PIPELINE" "$CAM_ID" "$VIDEO_PATH" "$SELECTED_CONFIG")
+    
+#     echo "Executing pipeline..."
+#     echo "Pipeline: $FULL_PIPELINE" >&2
+    
+#     gst-launch-1.0 $FULL_PIPELINE
+    
+# else
+#     # Multiple video processing - create parallel pipelines
+#     echo "Processing multiple videos in parallel..."
+    
+#     PIDS=()
+    
+#     for i in "${!VIDEO_LIST[@]}"; do
+#         VIDEO_PATH="${VIDEO_LIST[$i]}"
+#         CAM_ID="${CAMERA_LIST[$i]}"
+        
+#         echo "Starting pipeline for: $VIDEO_PATH (Camera: $CAM_ID, Config: $SELECTED_CONFIG)"
+        
+#         SOURCE_PIPELINE=$(optimize_source_pipeline "$VIDEO_PATH" "$SELECTED_CONFIG")
+#         FULL_PIPELINE=$(build_inference_pipeline "$SOURCE_PIPELINE" "$CAM_ID" "$VIDEO_PATH" "$SELECTED_CONFIG")
+        
+#         echo "Pipeline $i: $FULL_PIPELINE" >&2
+        
+#         # Run each pipeline in background
+#         (
+#             echo "Starting inference for camera $CAM_ID..."
+#             gst-launch-1.0 $FULL_PIPELINE
+#         ) &
+        
+#         PIDS+=($!)
+        
+#         # Small delay between starting pipelines to avoid resource contention
+#         sleep 2
+#     done
+    
+#     echo "All pipelines started. PIDs: ${PIDS[*]}"
+#     echo "Waiting for pipelines to complete..."
+    
+#     # Wait for all background processes
+#     for pid in "${PIDS[@]}"; do
+#         wait $pid
+#         echo "Pipeline with PID $pid completed"
+#     done
+# fi
+
+# # Send end boundary messages to Kafka
+# echo "Sending end boundary messages to Kafka..."
+# for i in "${!VIDEO_LIST[@]}"; do
+#     VIDEO_PATH="${VIDEO_LIST[$i]}"
+#     CAM_ID="${CAMERA_LIST[$i]}"
+    
+#     if $RUN_DETECT; then
+#         python3 ./scripts/define_video_boundary_kafka.py \
+#             --video "$VIDEO_PATH" \
+#             --task "gvadetect" \
+#             --status "end" \
+#             --camera "$CAM_ID" \
+#             --kafka-broker "$KAFKA_BROKER" \
+#             --kafka-topic "$KAFKA_TOPIC" || echo "Warning: Could not send detect end boundary for $CAM_ID"
+#     fi
+    
+#     if $RUN_POSE; then
+#         python3 ./scripts/define_video_boundary_kafka.py \
+#             --video "$VIDEO_PATH" \
+#             --task "gvapose" \
+#             --status "end" \
+#             --camera "$CAM_ID" \
+#             --kafka-broker "$KAFKA_BROKER" \
+#             --kafka-topic "$KAFKA_TOPIC" || echo "Warning: Could not send pose end boundary for $CAM_ID"
+#     fi
+# done
+
+# echo "=== DLStreamer Video Processing Completed ==="
+
+#!/bin/bash
 set -e
+
+# ============================================
+# Intel Arc A770 DLStreamer Pipeline
+# Simplified & Optimized Version
+# ============================================
 
 # Default values
 DEVICE="GPU.1"
@@ -1015,37 +1389,17 @@ PIPELINE_PIDS=()
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --video)
-            IFS=',' read -ra VIDEO_LIST <<< "$2"
-            shift 2
-            ;;
-        --camera-id)
-            IFS=',' read -ra CAMERA_LIST <<< "$2"
-            shift 2
-            ;;
-        --tasks)
-            IFS=',' read -ra TASK_LIST <<< "$2"
-            shift 2
-            ;;
-        --detect-model)
-            DETECT_MODEL="$2"
-            shift 2
-            ;;
-        --pose-model)
-            POSE_MODEL="$2"
-            shift 2
-            ;;
-        --device)
-            DEVICE="$2"
-            shift 2
-            ;;
-        *)
-            shift
-            ;;
+        --video) IFS=',' read -ra VIDEO_LIST <<< "$2"; shift 2 ;;
+        --camera-id) IFS=',' read -ra CAMERA_LIST <<< "$2"; shift 2 ;;
+        --tasks) IFS=',' read -ra TASK_LIST <<< "$2"; shift 2 ;;
+        --detect-model) DETECT_MODEL="$2"; shift 2 ;;
+        --pose-model) POSE_MODEL="$2"; shift 2 ;;
+        --device) DEVICE="$2"; shift 2 ;;
+        *) shift ;;
     esac
 done
 
-# Determine which tasks to run
+# Determine tasks
 for task in "${TASK_LIST[@]}"; do
     case $task in
         gvadetect) RUN_DETECT=true ;;
@@ -1069,36 +1423,15 @@ export LIBVA_DRIVER_NAME=iHD
 
 echo "✅ Device: Intel Arc A770 (GPU.1)"
 echo "📍 DRI Device: /dev/dri/renderD129"
-echo "🎬 Decoder: VAAPI Hardware (vaapih264dec)"
-echo "🧠 Inference: GPU.1"
+echo "🎬 Decoder: VAAPI (vaapih264dec)"
+echo "🧠 Inference: GPU.1 (OpenVINO)"
 echo ""
-echo "📹 Processing Configuration:"
+echo "📹 Configuration:"
 echo "   Videos: ${VIDEO_LIST[*]}"
 echo "   Cameras: ${CAMERA_LIST[*]}"
 echo "   Tasks: ${TASK_LIST[*]}"
-echo "   Detection Model: $DETECT_MODEL"
-echo "   Pose Model: $POSE_MODEL"
 echo "=========================================="
 echo ""
-
-# ============================================
-# SEND KAFKA START MESSAGES
-# ============================================
-
-for i in "${!VIDEO_LIST[@]}"; do
-    video="${VIDEO_LIST[$i]}"
-    camera_id="${CAMERA_LIST[$i]}"
-    
-    if $RUN_DETECT; then
-        python3 /home/dlstreamer/scripts/define_video_boundary_kafka.py \
-            --video "$video" --task "gvadetect" --status "start" --camera "$camera_id"
-    fi
-    
-    if $RUN_POSE; then
-        python3 /home/dlstreamer/scripts/define_video_boundary_kafka.py \
-            --video "$video" --task "gvapose" --status "start" --camera "$camera_id"
-    fi
-done
 
 # ============================================
 # BUILD AND LAUNCH PIPELINES
@@ -1108,14 +1441,14 @@ for i in "${!VIDEO_LIST[@]}"; do
     video="${VIDEO_LIST[$i]}"
     camera_id="${CAMERA_LIST[$i]}"
     
-    echo "🎬 Setting up pipeline for $camera_id: $video"
+    echo "🎬 Setting up pipeline for $camera_id"
     
     # Build source pipeline with VAAPI decoder
     source_pipeline="rtspsrc location=\"$video\" latency=0 buffer-mode=auto drop-on-latency=true protocols=tcp timeout=5000000 retry=3 ! "
     source_pipeline+="rtph264depay ! h264parse ! "
     source_pipeline+="vaapih264dec ! videoconvert ! "
     
-    # Create Kafka tags
+    # Kafka tags
     detect_tag="{\\\"camera\\\": \\\"$camera_id\\\", \\\"video\\\": \\\"$video\\\", \\\"task\\\": \\\"gvadetect\\\"}"
     pose_tag="{\\\"camera\\\": \\\"$camera_id\\\", \\\"video\\\": \\\"$video\\\", \\\"task\\\": \\\"gvapose\\\"}"
     
@@ -1124,39 +1457,37 @@ for i in "${!VIDEO_LIST[@]}"; do
         # Dual model pipeline
         pipeline="$source_pipeline tee name=t_$camera_id "
         
-        # Detection branch
+        # Detection branch (NO ie-config - causes stoi error)
         pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
-        pipeline+="gvadetect model="$DETECT_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=ie"
+        pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=ie ! "
         pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
         
         # Pose branch
         pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
-        pipeline+="gvadetect model="$POSE_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=opencv"
+        pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=opencv ! "
         pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
         
     elif $RUN_DETECT; then
-        # Detection only
         pipeline="$source_pipeline "
-        pipeline+="gvadetect model="$DETECT_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=ie"
+        pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=ie ! "
         pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
         
     elif $RUN_POSE; then
-        # Pose only
         pipeline="$source_pipeline "
-        pipeline+="gvadetect model="$POSE_MODEL" device="GPU.1" ie-config="GPU_THROUGHPUT_STREAMS=GPU_THROUGHPUT_AUTO" pre-process-backend=opencv"
+        pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=opencv ! "
         pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
         pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
         pipeline+="fakesink sync=false "
     fi
     
     # Launch pipeline
-    echo "🚀 Launching pipeline $i for $camera_id"
+    echo "🚀 Launching pipeline $i"
     echo "Pipeline: $pipeline"
     echo ""
     
@@ -1164,14 +1495,8 @@ for i in "${!VIDEO_LIST[@]}"; do
     PIPELINE_PIDS+=($!)
 done
 
-# ============================================
-# WAIT FOR PIPELINES
-# ============================================
-
-echo "✅ All pipelines launched. PIDs: ${PIPELINE_PIDS[*]}"
-echo "⏳ Waiting for pipelines to complete..."
-
 # Wait for all pipelines
+echo "✅ All pipelines launched. PIDs: ${PIPELINE_PIDS[*]}"
 for pid in "${PIPELINE_PIDS[@]}"; do
     wait $pid
 done

@@ -1,13 +1,173 @@
+# services:
+#   zookeeper:
+#     image: wurstmeister/zookeeper
+#     container_name: zookeeper
+#     ports:
+#       - "2181:2181"
+
+#   kafka:
+#     image: wurstmeister/kafka
+#     container_name: kafka
+#     ports:
+#       - "9092:9092"
+#     environment:
+#       - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092
+#       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+#       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+#       - KAFKA_BROKER_ID=1
+#       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+#     volumes:
+#       - ./kafka_data:/var/lib/kafka/data
+#     depends_on:
+#       - zookeeper
+#     healthcheck:
+#       test: ["CMD", "nc", "-z", "localhost", "9092"]
+#       interval: 10s
+#       retries: 5
+#       start_period: 20s
+
+#   dlstreamer:
+#     build: .
+#     container_name: dlstreamer
+#     volumes:
+#       - ./scripts:/home/dlstreamer/scripts
+#       - ./videos:/home/dlstreamer/videos
+#       - ./models:/home/dlstreamer/models
+#     depends_on:
+#       - kafka
+#     restart: on-failure
+
+
+#   fastapi-service:
+#     build: ./test_kafka/
+#     container_name: fastapi-service
+#     ports:
+#       - "8001:8001"
+#     depends_on:
+#       - kafka
+#     environment:
+#       - KAFKA_BROKER=kafka:9092
+
+version: '3.8'
+
 services:
+  # ============================================
+  # RTSP SERVER (MediaMTX)
+  # ============================================
+  rtsp-server:
+    image: bluenviron/mediamtx:latest
+    container_name: rtsp-server
+    ports:
+      - "8554:8554"  # RTSP port
+      - "8888:8888"  # HLS/API port
+      - "8889:8889"  # WebRTC port
+    networks:
+      - dlstreamer_net
+    restart: unless-stopped
+    environment:
+      - MTX_API=yes
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8888/v1/config/get"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # CAMERA FEEDERS (FFmpeg)
+  # ============================================
+  cam0-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam0-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_net
+    depends_on:
+      rtsp-server:
+        condition: service_healthy
+    restart: unless-stopped
+    command: >
+      -re -stream_loop -1 -i /videos/cam0_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam0
+
+  cam2-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam2-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_net
+    depends_on:
+      rtsp-server:
+        condition: service_healthy
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 5 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam2_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam2"
+
+  cam4-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam4-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_net
+    depends_on:
+      rtsp-server:
+        condition: service_healthy
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 10 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam4_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam4"
+
+  cam6-feeder:
+    image: jrottenberg/ffmpeg:5.1-alpine
+    container_name: cam6-feeder
+    volumes:
+      - ./videos:/videos:ro
+    networks:
+      - dlstreamer_net
+    depends_on:
+      rtsp-server:
+        condition: service_healthy
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 15 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam6_h264.mp4
+      -c copy
+      -f rtsp
+      -rtsp_transport tcp
+      rtsp://rtsp-server:8554/cam6"
+
+  # ============================================
+  # KAFKA INFRASTRUCTURE
+  # ============================================
   zookeeper:
     image: wurstmeister/zookeeper
-    container_name: zookeeper
+    container_name: zookeeper_dlstreamer
     ports:
       - "2181:2181"
+    networks:
+      - dlstreamer_net
+    restart: unless-stopped
 
   kafka:
     image: wurstmeister/kafka
-    container_name: kafka
+    container_name: kafka_dlstreamer
     ports:
       - "9092:9092"
     environment:
@@ -16,36 +176,124 @@ services:
       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
       - KAFKA_BROKER_ID=1
       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CREATE_TOPICS=dlstreamer_output:4:1
     volumes:
-      - ./kafka_data:/var/lib/kafka/data
+      - kafka_data:/var/lib/kafka/data
     depends_on:
       - zookeeper
+    networks:
+      - dlstreamer_net
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "9092"]
       interval: 10s
       retries: 5
       start_period: 20s
 
+  # ============================================
+  # DLSTREAMER (Intel Arc A770)
+  # ============================================
   dlstreamer:
     build: .
-    container_name: dlstreamer
+    container_name: dlstreamer_arc
     volumes:
       - ./scripts:/home/dlstreamer/scripts
       - ./videos:/home/dlstreamer/videos
       - ./models:/home/dlstreamer/models
+      - ./benchmark_results:/benchmark_results
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/dri:/dev/dri
+    devices:
+      - /dev/dri:/dev/dri
     depends_on:
-      - kafka
-    restart: on-failure
+      kafka:
+        condition: service_healthy
+      rtsp-server:
+        condition: service_healthy
+      cam0-feeder:
+        condition: service_started
+      cam2-feeder:
+        condition: service_started
+      cam4-feeder:
+        condition: service_started
+      cam6-feeder:
+        condition: service_started
+    networks:
+      - dlstreamer_net
+    restart: unless-stopped
+    privileged: true
+    environment:
+      # Kafka configuration
+      - KAFKA_BROKER=kafka:9092
+      # Intel Arc A770 GPU configuration
+      - LIBVA_DEVICE=/dev/dri/renderD129
+      - GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
+      - LIBVA_DRIVER_NAME=iHD
+      - GST_VAAPI_ALL_DRIVERS=1
+      - LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
+      # OpenVINO GPU configuration
+      - GPU_DEVICE_ORDINAL=1
+      # GStreamer debug
+      - GST_DEBUG=2
+      - DISPLAY=${DISPLAY:-:0}
+    command: >
+      bash -c "
+      echo '========================================' &&
+      echo '🚀 Intel Arc A770 DLStreamer Pipeline' &&
+      echo '========================================' &&
+      echo '' &&
+      echo '📊 Hardware Detection:' &&
+      python3 /home/dlstreamer/scripts/device_detector.py --verbose &&
+      echo '' &&
+      echo '⏳ Waiting for RTSP streams to be ready...' &&
+      sleep 30 &&
+      echo '' &&
+      echo '🎬 Launching pipeline...' &&
+      chmod +x /home/dlstreamer/scripts/process_video.sh &&
+      /home/dlstreamer/scripts/process_video.sh 
+      --video 'rtsp://rtsp-server:8554/cam0,rtsp://rtsp-server:8554/cam2,rtsp://rtsp-server:8554/cam4,rtsp://rtsp-server:8554/cam6' 
+      --tasks 'gvadetect,gvapose' 
+      --detect-model '/home/dlstreamer/models/detection_model/FP32/det.xml' 
+      --pose-model '/home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml' 
+      --camera-id 'cam0,cam2,cam4,cam6' 
+      --device 'GPU.1'
+      "
 
-
-  fastapi-service:
-    build: ./test_kafka/
-    container_name: fastapi-service
-    ports:
-      - "8001:8001"
+  # ============================================
+  # BENCHMARK MONITOR
+  # ============================================
+  benchmark-monitor:
+    image: python:3.9-slim
+    container_name: benchmark_monitor
+    volumes:
+      - ./benchmark_results:/benchmark_results
+      - ./scripts/benchmark_monitor.py:/app/benchmark_monitor.py:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /dev/dri:/dev/dri
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+    networks:
+      - dlstreamer_net
+    restart: unless-stopped
+    privileged: true
     environment:
       - KAFKA_BROKER=kafka:9092
+      - PYTHONUNBUFFERED=1
+      - LIBVA_DRIVER_NAME=iHD
+    command: >
+      bash -c "
+      echo '📊 Starting Benchmark Monitor' &&
+      apt-get update -qq && apt-get install -y -qq procps netcat-openbsd > /dev/null 2>&1 &&
+      pip install -q kafka-python psutil docker &&
+      python /app/benchmark_monitor.py
+      "
 
+networks:
+  dlstreamer_net:
+    driver: bridge
 
+volumes:
+  kafka_data:
