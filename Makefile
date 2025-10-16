@@ -4,25 +4,25 @@
 # setup:
 # 	@echo "Setting up Universal DLStreamer Pipeline..."
 # 	docker network create dlstreamer_shared_net || true
-# 	docker compose -f docker-compose.streams.yml up -d
+# 	docker  compose -f docker compose.streams.yml up -d
 # 	sleep 10
-# 	docker compose -f docker-compose.dlstreamer.yml --profile auto up -d
+# 	docker  compose -f docker compose.dlstreamer.yml --profile auto up -d
 # 	@echo "✅ Setup complete! Monitor with: make monitor"
 
 # # Start services
 # start:
-# 	docker compose -f docker-compose.streams.yml up -d
-# 	docker compose -f docker-compose.dlstreamer.yml --profile auto up -d
+# 	docker  compose -f docker compose.streams.yml up -d
+# 	docker  compose -f docker compose.dlstreamer.yml --profile auto up -d
 
 # # Stop services  
 # stop:
-# 	docker compose -f docker-compose.dlstreamer.yml down
-# 	docker compose -f docker-compose.streams.yml down
+# 	docker  compose -f docker compose.dlstreamer.yml down
+# 	docker  compose -f docker compose.streams.yml down
 
 # # Clean everything
 # clean:
-# 	docker compose -f docker-compose.dlstreamer.yml down -v
-# 	docker compose -f docker-compose.streams.yml down -v
+# 	docker  compose -f docker compose.dlstreamer.yml down -v
+# 	docker  compose -f docker compose.streams.yml down -v
 # 	docker network rm dlstreamer_shared_net || true
 # 	docker system prune -f
 
@@ -40,8 +40,8 @@
 # # Check status
 # status:
 # 	@echo "📋 Service Status:"
-# 	@docker compose -f docker-compose.streams.yml ps
-# 	@docker compose -f docker-compose.dlstreamer.yml ps
+# 	@docker  compose -f docker compose.streams.yml ps
+# 	@docker  compose -f docker compose.dlstreamer.yml ps
 .PHONY: setup start stop restart clean logs logs-streams gpu-monitor test-gpu test-streams help
 
 # Default target
@@ -62,29 +62,29 @@ help:
 # Setup everything from scratch
 setup:
 	@echo "Setting up Intel Arc A770 video analytics pipeline..."
-	docker-compose down -v
-	docker-compose build
-	docker-compose up -d
+	docker compose down -v
+	docker compose build
+	docker compose up -d
 	@echo "Waiting for services to start..."
 	sleep 10
 	@echo "Setup complete. Use 'make logs' to monitor progress."
 
 # Start services
 start:
-	docker-compose up -d
+	docker compose up -d
 
 # Stop services
 stop:
-	docker-compose down
+	docker compose down
 
 # Restart services
 restart:
-	docker-compose restart
+	docker compose restart
 
 # Clean everything
 clean:
 	@echo "Cleaning up all containers, volumes, and networks..."
-	docker-compose down -v
+	docker compose down -v
 	docker system prune -f
 	@echo "Cleanup complete."
 
