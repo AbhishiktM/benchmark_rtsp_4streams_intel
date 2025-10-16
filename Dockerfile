@@ -4,24 +4,32 @@ FROM intel/dlstreamer:latest
 WORKDIR /home/dlstreamer
 
 # Install required system packages
-RUN apt-get update && apt-get install -y \
-    pciutils \
-    netcat-openbsd \
-    procps \
-    wget \
-    curl \
-    python3-pip \
-    python3-dev \
-    gstreamer1.0-plugins-ugly \
-    gstreamer1.0-libav \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        apt-utils \
+        pciutils \
+        netcat-openbsd \
+        procps \
+        wget \
+        curl \
+        python3-pip \
+        python3-dev \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-ugly \
+        gstreamer1.0-libav \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Python packages
-RUN pip3 install --no-cache-dir \
-    kafka-python==2.0.2 \
-    numpy==1.24.3 \
-    psutil==5.9.5 \
-    docker==6.1.3
+RUN python3 -m pip install --upgrade pip setuptools wheel --break-system-packages && \
+    pip3 install --no-cache-dir \
+        kafka-python==2.0.2 \
+        numpy==1.24.3 \
+        psutil==5.9.5 \
+        docker==6.1.3 \
+        --break-system-packages
 
 # Create necessary directories
 RUN mkdir -p /home/dlstreamer/scripts \
@@ -40,5 +48,6 @@ ENV LIBVA_DEVICE=/dev/dri/renderD129
 ENV GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
 ENV LIBVA_DRIVER_NAME=iHD
 ENV GPU_DEVICE_ORDINAL=1
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/opt/intel/openvino/runtime/lib/intel64
 
 CMD ["/bin/bash"]
