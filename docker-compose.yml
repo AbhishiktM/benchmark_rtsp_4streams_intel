@@ -28,9 +28,17 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_CREATE_TOPICS: "dlstreamer-output:4:1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     ports:
       - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   rtsp-server:
     image: bluenviron/mediamtx:latest
@@ -53,15 +61,15 @@ services:
     networks:
       - dlstreamer_net
     depends_on:
-      - rtsp-server
+      rtsp-server:
+        condition: service_healthy
     volumes:
       - ./videos:/videos:ro
+    entrypoint: ["/bin/sh", "-c"]
     command: >
-      bash -c "
-      sleep 10 &&
-      ffmpeg -re -stream_loop -1 -i /videos/cam0_h264.mp4 
-      -c copy -f rtsp rtsp://rtsp-server:8554/cam0
-      "
+      "sleep 10 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam0_h264.mp4
+      -c copy -f rtsp rtsp://rtsp-server:8554/cam0"
     restart: unless-stopped
 
   cam2-feeder:
@@ -70,15 +78,15 @@ services:
     networks:
       - dlstreamer_net
     depends_on:
-      - rtsp-server
+      rtsp-server:
+        condition: service_healthy
     volumes:
       - ./videos:/videos:ro
+    entrypoint: ["/bin/sh", "-c"]
     command: >
-      bash -c "
-      sleep 15 &&
-      ffmpeg -re -stream_loop -1 -i /videos/cam2_h264.mp4 
-      -c copy -f rtsp rtsp://rtsp-server:8554/cam2
-      "
+      "sleep 15 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam2_h264.mp4
+      -c copy -f rtsp rtsp://rtsp-server:8554/cam2"
     restart: unless-stopped
 
   cam4-feeder:
@@ -87,15 +95,15 @@ services:
     networks:
       - dlstreamer_net
     depends_on:
-      - rtsp-server
+      rtsp-server:
+        condition: service_healthy
     volumes:
       - ./videos:/videos:ro
+    entrypoint: ["/bin/sh", "-c"]
     command: >
-      bash -c "
-      sleep 20 &&
-      ffmpeg -re -stream_loop -1 -i /videos/cam4_h264.mp4 
-      -c copy -f rtsp rtsp://rtsp-server:8554/cam4
-      "
+      "sleep 20 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam4_h264.mp4
+      -c copy -f rtsp rtsp://rtsp-server:8554/cam4"
     restart: unless-stopped
 
   cam6-feeder:
@@ -104,15 +112,15 @@ services:
     networks:
       - dlstreamer_net
     depends_on:
-      - rtsp-server
+      rtsp-server:
+        condition: service_healthy
     volumes:
       - ./videos:/videos:ro
+    entrypoint: ["/bin/sh", "-c"]
     command: >
-      bash -c "
-      sleep 25 &&
-      ffmpeg -re -stream_loop -1 -i /videos/cam6_h264.mp4 
-      -c copy -f rtsp rtsp://rtsp-server:8554/cam6
-      "
+      "sleep 25 &&
+      ffmpeg -re -stream_loop -1 -i /videos/cam6_h264.mp4
+      -c copy -f rtsp rtsp://rtsp-server:8554/cam6"
     restart: unless-stopped
 
   dlstreamer:
@@ -121,12 +129,10 @@ services:
     networks:
       - dlstreamer_net
     depends_on:
-      - kafka
-      - rtsp-server
-      - cam0-feeder
-      - cam2-feeder
-      - cam4-feeder
-      - cam6-feeder
+      kafka:
+        condition: service_healthy
+      rtsp-server:
+        condition: service_healthy
     volumes:
       - ./scripts:/home/dlstreamer/scripts:ro
       - ./models:/home/dlstreamer/models:ro
@@ -142,16 +148,15 @@ services:
       - GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
       - LIBVA_DRIVER_NAME=iHD
       - GPU_DEVICE_ORDINAL=1
+    entrypoint: ["/bin/bash", "-c"]
     command: >
-      bash -c "
-      sleep 40 &&
+      "sleep 60 &&
       /home/dlstreamer/scripts/process_video.sh 
       --cameras cam0,cam2,cam4,cam6 
       --detection-model /home/dlstreamer/models/detection_model/FP32/det.xml 
       --pose-model /home/dlstreamer/models/public/yolo11s-pose/FP32/yolo11s-pose.xml 
       --kafka-broker kafka:9092 
-      --kafka-topic dlstreamer-output
-      "
+      --kafka-topic dlstreamer-output"
     restart: unless-stopped
 
   benchmark-monitor:
@@ -160,16 +165,16 @@ services:
     networks:
       - dlstreamer_net
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     volumes:
       - ./benchmark_results:/benchmark_results:rw
       - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: ["/bin/bash", "-c"]
     command: >
-      bash -c "
-      sleep 45 &&
+      "sleep 70 &&
       python3 /home/dlstreamer/scripts/benchmark_monitor.py 
       --kafka-broker kafka:9092 
       --kafka-topic dlstreamer-output 
-      --output-dir /benchmark_results
-      "
+      --output-dir /benchmark_results"
     restart: unless-stopped

@@ -1427,17 +1427,48 @@ log() {
 check_gpu() {
     log "Checking GPU availability..."
     
-    if ! ls /dev/dri/renderD129 >/dev/null 2>&1; then
+    if ! ls /dev/dri/renderD129 > /dev/null 2>&1; then
         log "ERROR: Arc A770 device not found at /dev/dri/renderD129"
         exit 1
     fi
     
-    if ! vainfo --device /dev/dri/renderD129 >/dev/null 2>&1; then
+    if ! vainfo --device /dev/dri/renderD129 > /dev/null 2>&1; then
         log "ERROR: VAAPI not working on Arc A770"
         exit 1
     fi
     
     log "GPU check passed - Arc A770 available"
+}
+
+# Wait for Kafka to be ready
+wait_for_kafka() {
+    log "Waiting for Kafka to be ready..."
+    local max_attempts=30
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if python3 -c "
+from confluent_kafka.admin import AdminClient
+try:
+    admin = AdminClient({'bootstrap.servers': '$KAFKA_BROKER'})
+    metadata = admin.list_topics(timeout=5)
+    print('Kafka is ready')
+    exit(0)
+except Exception as e:
+    print(f'Kafka not ready: {e}')
+    exit(1)
+" 2>/dev/null; then
+            log "Kafka is ready"
+            return 0
+        fi
+        
+        log "Kafka not ready, attempt $attempt/$max_attempts"
+        sleep 5
+        attempt=$((attempt + 1))
+    done
+    
+    log "ERROR: Kafka failed to become ready after $max_attempts attempts"
+    exit 1
 }
 
 # Build GStreamer pipeline for single camera
@@ -1446,26 +1477,7 @@ build_pipeline() {
     local detection_model=$2
     local pose_model=$3
     
-    cat << EOF
-rtspsrc location="rtsp://${RTSP_SERVER}/${camera}" latency=0 buffer-mode=auto drop-on-latency=true protocols=tcp timeout=5000000 retry=3 ! 
-rtph264depay ! 
-h264parse ! 
-vaapih264dec ! 
-videoconvert ! 
-tee name=t_${camera} 
-t_${camera}. ! 
-queue max-size-buffers=10 leaky=downstream ! 
-gvadetect model="${detection_model}" device="GPU.1" nireq=4 batch-size=1 pre-process-backend=ie ! 
-gvametaconvert add-tensor-data=true tags="{\\\"camera\\\": \\\"${camera}\\\", \\\"task\\\": \\\"gvadetect\\\"}" ! 
-gvametapublish file-format=json-lines method=kafka address="${KAFKA_BROKER}" topic="${KAFKA_TOPIC}" ! 
-fakesink sync=false 
-t_${camera}. ! 
-queue max-size-buffers=10 leaky=downstream ! 
-gvadetect model="${pose_model}" device="GPU.1" nireq=4 batch-size=1 pre-process-backend=opencv ! 
-gvametaconvert format=json tags="{\\\"camera\\\": \\\"${camera}\\\", \\\"task\\\": \\\"gvapose\\\"}" ! 
-gvametapublish file-format=json-lines method=kafka address="${KAFKA_BROKER}" topic="${KAFKA_TOPIC}" ! 
-fakesink sync=false
-EOF
+    echo "rtspsrc location=\"rtsp://${RTSP_SERVER}/${camera}\" latency=0 buffer-mode=auto drop-on-latency=true protocols=tcp timeout=5000000 retry=3 ! rtph264depay ! h264parse ! vaapih264dec ! videoconvert ! tee name=t_${camera} t_${camera}. ! queue max-size-buffers=10 leaky=downstream ! gvadetect model=\"${detection_model}\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=ie ! gvametaconvert add-tensor-data=true tags=\"{\\\"camera\\\": \\\"${camera}\\\", \\\"task\\\": \\\"gvadetect\\\"}\" ! gvametapublish file-format=json-lines method=kafka address=\"${KAFKA_BROKER}\" topic=\"${KAFKA_TOPIC}\" ! fakesink sync=false t_${camera}. ! queue max-size-buffers=10 leaky=downstream ! gvadetect model=\"${pose_model}\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=opencv ! gvametaconvert format=json tags=\"{\\\"camera\\\": \\\"${camera}\\\", \\\"task\\\": \\\"gvapose\\\"}\" ! gvametapublish file-format=json-lines method=kafka address=\"${KAFKA_BROKER}\" topic=\"${KAFKA_TOPIC}\" ! fakesink sync=false"
 }
 
 # Main execution
@@ -1474,6 +1486,9 @@ main() {
     
     # Check GPU
     check_gpu
+    
+    # Wait for Kafka
+    wait_for_kafka
     
     # Validate model files
     if [[ ! -f "$DETECTION_MODEL" ]]; then
@@ -1499,13 +1514,14 @@ main() {
     done
     
     # Join pipelines
-    FULL_PIPELINE=$(IFS=' '; echo "${PIPELINES[*]}")
+    FULL_PIPELINE=$(printf "%s " "${PIPELINES[@]}")
     
     if [[ "$VERBOSE" == "true" ]]; then
         log "Full pipeline: $FULL_PIPELINE"
     fi
     
     # Send start boundary message
+    log "Sending start boundary messages..."
     python3 /home/dlstreamer/scripts/define_video_boundary_kafka.py \
         --action start \
         --cameras "$CAMERAS" \
@@ -1518,6 +1534,7 @@ main() {
     gst-launch-1.0 $FULL_PIPELINE
     
     # Send stop boundary message
+    log "Sending stop boundary messages..."
     python3 /home/dlstreamer/scripts/define_video_boundary_kafka.py \
         --action stop \
         --cameras "$CAMERAS" \
