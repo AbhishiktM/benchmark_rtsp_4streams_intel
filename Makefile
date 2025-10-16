@@ -121,3 +121,8 @@ test-streams:
 		echo "Testing $$cam:"; \
 		ffprobe rtsp://localhost:8554/$$cam 2>&1 | grep "Stream #0:0" || echo "Stream $$cam not ready"; \
 	done
+
+create-topic:
+	docker exec dlstreamer_arc python3 /home/dlstreamer/scripts/create_kafka_topic.py \
+		--broker kafka:9092 \
+		--topic dlstreamer-output
