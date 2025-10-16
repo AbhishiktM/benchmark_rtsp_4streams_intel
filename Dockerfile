@@ -1,4 +1,4 @@
-# FROM intel/dlstreamer:latest
+FROM intel/dlstreamer:latest
 
 # Set working directory
 WORKDIR /home/dlstreamer
