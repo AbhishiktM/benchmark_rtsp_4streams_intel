@@ -1372,133 +1372,170 @@ set -e
 # Intel Arc A770 DLStreamer Pipeline
 # Simplified & Optimized Version
 # ============================================
+#!/bin/bash
+set -e
 
 # Default values
-DEVICE="GPU.1"
-KAFKA_BROKER="${KAFKA_BROKER:-kafka:9092}"
-KAFKA_TOPIC="dlstreamer-output"
-DETECT_MODEL=""
+CAMERAS=""
+DETECTION_MODEL=""
 POSE_MODEL=""
-VIDEO_LIST=()
-CAMERA_LIST=()
-TASK_LIST=()
-RUN_DETECT=false
-RUN_POSE=false
-PIPELINE_PIDS=()
+KAFKA_BROKER="kafka:9092"
+KAFKA_TOPIC="dlstreamer-output"
+RTSP_SERVER="rtsp-server:8554"
+VERBOSE=false
 
-# Parse arguments
+# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --video) IFS=',' read -ra VIDEO_LIST <<< "$2"; shift 2 ;;
-        --camera-id) IFS=',' read -ra CAMERA_LIST <<< "$2"; shift 2 ;;
-        --tasks) IFS=',' read -ra TASK_LIST <<< "$2"; shift 2 ;;
-        --detect-model) DETECT_MODEL="$2"; shift 2 ;;
-        --pose-model) POSE_MODEL="$2"; shift 2 ;;
-        --device) DEVICE="$2"; shift 2 ;;
-        *) shift ;;
+        --cameras)
+            CAMERAS="$2"
+            shift 2
+            ;;
+        --detection-model)
+            DETECTION_MODEL="$2"
+            shift 2
+            ;;
+        --pose-model)
+            POSE_MODEL="$2"
+            shift 2
+            ;;
+        --kafka-broker)
+            KAFKA_BROKER="$2"
+            shift 2
+            ;;
+        --kafka-topic)
+            KAFKA_TOPIC="$2"
+            shift 2
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
     esac
 done
 
-# Determine tasks
-for task in "${TASK_LIST[@]}"; do
-    case $task in
-        gvadetect) RUN_DETECT=true ;;
-        gvapose) RUN_POSE=true ;;
-    esac
-done
+# Validate required parameters
+if [[ -z "$CAMERAS" || -z "$DETECTION_MODEL" || -z "$POSE_MODEL" ]]; then
+    echo "Error: Missing required parameters"
+    echo "Usage: $0 --cameras cam0,cam2 --detection-model /path/to/det.xml --pose-model /path/to/pose.xml"
+    exit 1
+fi
 
-# ============================================
-# INTEL ARC A770 CONFIGURATION
-# ============================================
+# Log function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
 
-echo "=========================================="
-echo "Intel Arc A770 DLStreamer Pipeline"
-echo "=========================================="
-echo ""
-
-# Force Intel Arc A770 environment
-export LIBVA_DEVICE=/dev/dri/renderD129
-export GST_VAAPI_DRM_DEVICE=/dev/dri/renderD129
-export LIBVA_DRIVER_NAME=iHD
-
-echo "✅ Device: Intel Arc A770 (GPU.1)"
-echo "📍 DRI Device: /dev/dri/renderD129"
-echo "🎬 Decoder: VAAPI (vaapih264dec)"
-echo "🧠 Inference: GPU.1 (OpenVINO)"
-echo ""
-echo "📹 Configuration:"
-echo "   Videos: ${VIDEO_LIST[*]}"
-echo "   Cameras: ${CAMERA_LIST[*]}"
-echo "   Tasks: ${TASK_LIST[*]}"
-echo "=========================================="
-echo ""
-
-# ============================================
-# BUILD AND LAUNCH PIPELINES
-# ============================================
-
-for i in "${!VIDEO_LIST[@]}"; do
-    video="${VIDEO_LIST[$i]}"
-    camera_id="${CAMERA_LIST[$i]}"
+# Check GPU availability
+check_gpu() {
+    log "Checking GPU availability..."
     
-    echo "🎬 Setting up pipeline for $camera_id"
-    
-    # Build source pipeline with VAAPI decoder
-    source_pipeline="rtspsrc location=\"$video\" latency=0 buffer-mode=auto drop-on-latency=true protocols=tcp timeout=5000000 retry=3 ! "
-    source_pipeline+="rtph264depay ! h264parse ! "
-    source_pipeline+="vaapih264dec ! videoconvert ! "
-    
-    # Kafka tags
-    detect_tag="{\\\"camera\\\": \\\"$camera_id\\\", \\\"video\\\": \\\"$video\\\", \\\"task\\\": \\\"gvadetect\\\"}"
-    pose_tag="{\\\"camera\\\": \\\"$camera_id\\\", \\\"video\\\": \\\"$video\\\", \\\"task\\\": \\\"gvapose\\\"}"
-    
-    # Build inference pipeline
-    if $RUN_DETECT && $RUN_POSE; then
-        # Dual model pipeline
-        pipeline="$source_pipeline tee name=t_$camera_id "
-        
-        # Detection branch (NO ie-config - causes stoi error)
-        pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
-        pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=ie ! "
-        pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
-        pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
-        pipeline+="fakesink sync=false "
-        
-        # Pose branch
-        pipeline+="t_$camera_id. ! queue max-size-buffers=10 leaky=downstream ! "
-        pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=opencv ! "
-        pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
-        pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
-        pipeline+="fakesink sync=false "
-        
-    elif $RUN_DETECT; then
-        pipeline="$source_pipeline "
-        pipeline+="gvadetect model=\"$DETECT_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=ie ! "
-        pipeline+="gvametaconvert add-tensor-data=true tags=\"$detect_tag\" ! "
-        pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
-        pipeline+="fakesink sync=false "
-        
-    elif $RUN_POSE; then
-        pipeline="$source_pipeline "
-        pipeline+="gvadetect model=\"$POSE_MODEL\" device=\"GPU.1\" nireq=4 batch-size=1 pre-process-backend=opencv ! "
-        pipeline+="gvametaconvert format=json tags=\"$pose_tag\" ! "
-        pipeline+="gvametapublish file-format=json-lines method=kafka address=\"$KAFKA_BROKER\" topic=\"$KAFKA_TOPIC\" ! "
-        pipeline+="fakesink sync=false "
+    if ! ls /dev/dri/renderD129 >/dev/null 2>&1; then
+        log "ERROR: Arc A770 device not found at /dev/dri/renderD129"
+        exit 1
     fi
     
-    # Launch pipeline
-    echo "🚀 Launching pipeline $i"
-    echo "Pipeline: $pipeline"
-    echo ""
+    if ! vainfo --device /dev/dri/renderD129 >/dev/null 2>&1; then
+        log "ERROR: VAAPI not working on Arc A770"
+        exit 1
+    fi
     
-    gst-launch-1.0 $pipeline &
-    PIPELINE_PIDS+=($!)
-done
+    log "GPU check passed - Arc A770 available"
+}
 
-# Wait for all pipelines
-echo "✅ All pipelines launched. PIDs: ${PIPELINE_PIDS[*]}"
-for pid in "${PIPELINE_PIDS[@]}"; do
-    wait $pid
-done
+# Build GStreamer pipeline for single camera
+build_pipeline() {
+    local camera=$1
+    local detection_model=$2
+    local pose_model=$3
+    
+    cat << EOF
+rtspsrc location="rtsp://${RTSP_SERVER}/${camera}" latency=0 buffer-mode=auto drop-on-latency=true protocols=tcp timeout=5000000 retry=3 ! 
+rtph264depay ! 
+h264parse ! 
+vaapih264dec ! 
+videoconvert ! 
+tee name=t_${camera} 
+t_${camera}. ! 
+queue max-size-buffers=10 leaky=downstream ! 
+gvadetect model="${detection_model}" device="GPU.1" nireq=4 batch-size=1 pre-process-backend=ie ! 
+gvametaconvert add-tensor-data=true tags="{\\\"camera\\\": \\\"${camera}\\\", \\\"task\\\": \\\"gvadetect\\\"}" ! 
+gvametapublish file-format=json-lines method=kafka address="${KAFKA_BROKER}" topic="${KAFKA_TOPIC}" ! 
+fakesink sync=false 
+t_${camera}. ! 
+queue max-size-buffers=10 leaky=downstream ! 
+gvadetect model="${pose_model}" device="GPU.1" nireq=4 batch-size=1 pre-process-backend=opencv ! 
+gvametaconvert format=json tags="{\\\"camera\\\": \\\"${camera}\\\", \\\"task\\\": \\\"gvapose\\\"}" ! 
+gvametapublish file-format=json-lines method=kafka address="${KAFKA_BROKER}" topic="${KAFKA_TOPIC}" ! 
+fakesink sync=false
+EOF
+}
 
-echo "✅ All pipelines completed"
+# Main execution
+main() {
+    log "Starting Intel Arc A770 video processing pipeline"
+    
+    # Check GPU
+    check_gpu
+    
+    # Validate model files
+    if [[ ! -f "$DETECTION_MODEL" ]]; then
+        log "ERROR: Detection model not found: $DETECTION_MODEL"
+        exit 1
+    fi
+    
+    if [[ ! -f "$POSE_MODEL" ]]; then
+        log "ERROR: Pose model not found: $POSE_MODEL"
+        exit 1
+    fi
+    
+    log "Models validated successfully"
+    
+    # Split cameras and build pipelines
+    IFS=',' read -ra CAMERA_ARRAY <<< "$CAMERAS"
+    PIPELINES=()
+    
+    for camera in "${CAMERA_ARRAY[@]}"; do
+        log "Building pipeline for camera: $camera"
+        pipeline=$(build_pipeline "$camera" "$DETECTION_MODEL" "$POSE_MODEL")
+        PIPELINES+=("( $pipeline )")
+    done
+    
+    # Join pipelines
+    FULL_PIPELINE=$(IFS=' '; echo "${PIPELINES[*]}")
+    
+    if [[ "$VERBOSE" == "true" ]]; then
+        log "Full pipeline: $FULL_PIPELINE"
+    fi
+    
+    # Send start boundary message
+    python3 /home/dlstreamer/scripts/define_video_boundary_kafka.py \
+        --action start \
+        --cameras "$CAMERAS" \
+        --kafka-broker "$KAFKA_BROKER" \
+        --kafka-topic "$KAFKA_TOPIC"
+    
+    log "Starting GStreamer pipeline..."
+    
+    # Execute pipeline
+    gst-launch-1.0 $FULL_PIPELINE
+    
+    # Send stop boundary message
+    python3 /home/dlstreamer/scripts/define_video_boundary_kafka.py \
+        --action stop \
+        --cameras "$CAMERAS" \
+        --kafka-broker "$KAFKA_BROKER" \
+        --kafka-topic "$KAFKA_TOPIC"
+    
+    log "Pipeline completed"
+}
+
+# Trap signals for cleanup
+trap 'log "Pipeline interrupted"; exit 1' INT TERM
+
+# Run main function
+main "$@"

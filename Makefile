@@ -42,110 +42,82 @@
 # 	@echo "📋 Service Status:"
 # 	@docker compose -f docker-compose.streams.yml ps
 # 	@docker compose -f docker-compose.dlstreamer.yml ps
+.PHONY: setup start stop restart clean logs logs-streams gpu-monitor test-gpu test-streams help
 
-.PHONY: help setup start stop restart clean logs logs-streams gpu-monitor test-streams
-
+# Default target
 help:
-	@echo "Intel Arc A770 DLStreamer - Available Commands:"
-	@echo ""
-	@echo "Setup & Control:"
-	@echo "  make setup          - Initial setup (network + build + start all)"
-	@echo "  make start          - Start all services"
-	@echo "  make stop           - Stop all services"
-	@echo "  make restart        - Restart all services"
-	@echo "  make clean          - Remove containers and volumes"
-	@echo ""
-	@echo "Monitoring:"
-	@echo "  make logs           - Show DLStreamer logs"
-	@echo "  make logs-streams   - Show RTSP stream logs"
-	@echo "  make gpu-monitor    - Monitor GPU usage"
-	@echo "  make test-streams   - Test RTSP streams availability"
-	@echo ""
-	@echo "Debugging:"
-	@echo "  make logs-kafka     - Show Kafka logs"
-	@echo "  make logs-benchmark - Show benchmark monitor logs"
+	@echo "Intel Arc A770 Video Analytics Pipeline"
+	@echo "Available commands:"
+	@echo "  make setup        - Build and start all services"
+	@echo "  make start        - Start all services"
+	@echo "  make stop         - Stop all services"
+	@echo "  make restart      - Restart all services"
+	@echo "  make clean        - Remove containers, volumes, network"
+	@echo "  make logs         - Show DLStreamer logs"
+	@echo "  make logs-streams - Show camera feeder logs"
+	@echo "  make gpu-monitor  - Monitor GPU usage"
+	@echo "  make test-gpu     - Test GPU access"
+	@echo "  make test-streams - Test RTSP streams"
 
+# Setup everything from scratch
 setup:
-	@echo "=========================================="
-	@echo "Setting up Intel Arc A770 DLStreamer"
-	@echo "=========================================="
-	@echo ""
-	@echo "Step 1: Creating Docker network..."
-	docker network create dlstreamer_net 2>/dev/null || echo "Network already exists"
-	@echo ""
-	@echo "Step 2: Building DLStreamer image..."
-	docker compose build
-	@echo ""
-	@echo "Step 3: Starting all services..."
-	docker compose up -d
-	@echo ""
-	@echo "Step 4: Waiting for services to be ready..."
-	@sleep 10
-	@echo ""
-	@echo "✅ Setup complete!"
-	@echo ""
-	@echo "Next steps:"
-	@echo "  make logs           - View DLStreamer logs"
-	@echo "  make test-streams   - Test RTSP streams"
-	@echo "  make gpu-monitor    - Monitor GPU usage"
+	@echo "Setting up Intel Arc A770 video analytics pipeline..."
+	docker-compose down -v
+	docker-compose build
+	docker-compose up -d
+	@echo "Waiting for services to start..."
+	sleep 10
+	@echo "Setup complete. Use 'make logs' to monitor progress."
 
+# Start services
 start:
-	docker compose up -d
+	docker-compose up -d
 
+# Stop services
 stop:
-	docker compose down
+	docker-compose down
 
+# Restart services
 restart:
-	docker compose restart
+	docker-compose restart
 
+# Clean everything
 clean:
-	@echo "Cleaning up..."
-	docker compose down -v
-	docker network rm dlstreamer_net 2>/dev/null || true
-	@echo "✅ Cleanup complete"
+	@echo "Cleaning up all containers, volumes, and networks..."
+	docker-compose down -v
+	docker system prune -f
+	@echo "Cleanup complete."
 
+# Show DLStreamer logs
 logs:
 	docker logs -f dlstreamer_arc
 
+# Show camera feeder logs
 logs-streams:
-	@echo "RTSP Stream Logs:"
-	@echo "================="
-	@echo ""
-	@echo "cam0-feeder:"
-	@docker logs --tail 10 cam0-feeder
-	@echo ""
-	@echo "cam2-feeder:"
-	@docker logs --tail 10 cam2-feeder
-	@echo ""
-	@echo "cam4-feeder:"
-	@docker logs --tail 10 cam4-feeder
-	@echo ""
-	@echo "cam6-feeder:"
-	@docker logs --tail 10 cam6-feeder
+	@echo "Camera feeder logs:"
+	docker logs cam0-feeder --tail 20
+	docker logs cam2-feeder --tail 20
+	docker logs cam4-feeder --tail 20
+	docker logs cam6-feeder --tail 20
 
-logs-kafka:
-	docker logs -f kafka_dlstreamer
-
-logs-benchmark:
-	docker logs -f benchmark_monitor
-
+# Monitor GPU usage
 gpu-monitor:
-	@echo "Monitoring Intel Arc A770 GPU..."
-	@echo "Press Ctrl+C to exit"
-	@echo ""
+	@echo "Monitoring GPU usage (Ctrl+C to stop):"
 	sudo intel_gpu_top
 
+# Test GPU access
+test-gpu:
+	@echo "Testing GPU access..."
+	docker exec dlstreamer_arc ls -la /dev/dri/
+	@echo "VAAPI info:"
+	docker exec dlstreamer_arc vainfo --device /dev/dri/renderD129
+	@echo "OpenVINO devices:"
+	docker exec dlstreamer_arc python3 -c "from openvino.runtime import Core; print(Core().available_devices)"
+
+# Test RTSP streams
 test-streams:
 	@echo "Testing RTSP streams..."
-	@echo ""
-	@echo "cam0: rtsp://localhost:8554/cam0"
-	@ffprobe -v error -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 rtsp://localhost:8554/cam0 2>&1 | head -5 || echo "❌ cam0 not available"
-	@echo ""
-	@echo "cam2: rtsp://localhost:8554/cam2"
-	@ffprobe -v error -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 rtsp://localhost:8554/cam2 2>&1 | head -5 || echo "❌ cam2 not available"
-	@echo ""
-	@echo "cam4: rtsp://localhost:8554/cam4"
-	@ffprobe -v error -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 rtsp://localhost:8554/cam4 2>&1 | head -5 || echo "❌ cam4 not available"
-	@echo ""
-	@echo "cam6: rtsp://localhost:8554/cam6"
-	@ffprobe -v error -show_entries stream=codec_name,width,height -of default=noprint_wrappers=1 rtsp://localhost:8554/cam6 2>&1 | head -5 || echo "❌ cam6 not available"
+	for cam in cam0 cam2 cam4 cam6; do \
+		echo "Testing $$cam:"; \
+		ffprobe rtsp://localhost:8554/$$cam 2>&1 | grep "Stream #0:0" || echo "Stream $$cam not ready"; \
+	done

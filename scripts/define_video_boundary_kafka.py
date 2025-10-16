@@ -1,41 +1,56 @@
-import argparse
+#!/usr/bin/env python3
+
 import json
+import argparse
+from datetime import datetime
 from kafka import KafkaProducer
-import time
 
-def send_kafka_message(video, task, status, camera=None, kafka_broker="kafka:9092", kafka_topic="dlstreamer_output"):
-    producer = KafkaProducer(
-        bootstrap_servers=kafka_broker,
-        value_serializer=lambda v: json.dumps(v).encode('utf-8')
-    )
+def send_boundary_message(action, cameras, kafka_broker, kafka_topic):
+    """Send boundary message to Kafka"""
+    
+    try:
+        producer = KafkaProducer(
+            bootstrap_servers=[kafka_broker],
+            value_serializer=lambda x: json.dumps(x).encode('utf-8')
+        )
+        
+        camera_list = cameras.split(',')
+        timestamp = datetime.now().isoformat()
+        
+        for camera in camera_list:
+            message = {
+                "type": "boundary",
+                "action": action,
+                "camera": camera.strip(),
+                "timestamp": timestamp,
+                "message": f"Video processing {action} for camera {camera.strip()}"
+            }
+            
+            producer.send(kafka_topic, value=message)
+            print(f"Sent {action} message for camera {camera.strip()}")
+        
+        producer.flush()
+        producer.close()
+        
+        print(f"All {action} messages sent successfully")
+        
+    except Exception as e:
+        print(f"Error sending boundary messages: {e}")
 
-    message = {
-        "video_id": video,
-        "task": task,
-        "status": status,
-        "timestamp": time.time(),
-        "tags": {
-            "video": video,
-            "task": task,
-            "camera": camera
-        }
-    }
-
-    producer.send(kafka_topic, message)
-    producer.flush()
-    print(f"Sent Kafka message: {message}")
-
+def main():
+    parser = argparse.ArgumentParser(description="Send video boundary messages to Kafka")
+    parser.add_argument("--action", required=True, choices=["start", "stop"], 
+                       help="Action type: start or stop")
+    parser.add_argument("--cameras", required=True, 
+                       help="Comma-separated list of camera names")
+    parser.add_argument("--kafka-broker", required=True, 
+                       help="Kafka broker address")
+    parser.add_argument("--kafka-topic", required=True, 
+                       help="Kafka topic name")
+    
+    args = parser.parse_args()
+    
+    send_boundary_message(args.action, args.cameras, args.kafka_broker, args.kafka_topic)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--video", required=True, help="Path to video file")
-    parser.add_argument("--task", required=True, help="Processing task (e.g., detection, tracking, pose)")
-    parser.add_argument("--status", required=True, choices=["start", "end"], help="Processing status")
-    parser.add_argument("--kafka-broker", default="kafka:9092", help="Kafka broker address")
-    parser.add_argument("--kafka-topic", default="dlstreamer_output", help="Kafka topic name")
-    parser.add_argument("--camera", required=True, help="Camera ID (e.g., camera1)")
-
-
-    args = parser.parse_args()
-    send_kafka_message(args.video, args.task, args.status, args.camera, args.kafka_broker, args.kafka_topic)
-
+    main()
