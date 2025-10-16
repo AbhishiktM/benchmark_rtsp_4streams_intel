@@ -534,10 +534,6 @@
 #     monitor = EnhancedBenchmarkMonitor()
 #     monitor.run()
 #!/usr/bin/env python3
-"""
-Benchmark Monitor for Intel Arc A770 Video Processing Pipeline
-Monitors Kafka messages and system performance
-"""
 
 import json
 import time
@@ -549,7 +545,7 @@ from typing import Dict, List, Optional
 from collections import defaultdict, deque
 
 import psutil
-from kafka import KafkaConsumer
+from confluent_kafka import Consumer, KafkaError
 
 class PerformanceMonitor:
     """Monitors system and GPU performance"""
@@ -557,7 +553,7 @@ class PerformanceMonitor:
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
         self.stats = defaultdict(lambda: defaultdict(list))
-        self.fps_counters = defaultdict(lambda: deque(maxlen=30))  # 30 second window
+        self.fps_counters = defaultdict(lambda: deque(maxlen=30))
         self.running = True
         
     def get_gpu_stats(self) -> Dict[str, float]:
@@ -570,7 +566,6 @@ class PerformanceMonitor:
             )
             
             if result.returncode == 0:
-                # Parse intel_gpu_top JSON output
                 lines = result.stdout.strip().split('\n')
                 for line in lines:
                     if line.startswith('{'):
@@ -602,7 +597,6 @@ class PerformanceMonitor:
         if len(timestamps) < 2:
             return 0.0
         
-        # Calculate FPS over the time window
         time_span = timestamps[-1] - timestamps[0]
         if time_span > 0:
             return (len(timestamps) - 1) / time_span
@@ -631,7 +625,6 @@ class PerformanceMonitor:
                     camera, task = camera_task.split('_', 1)
                     fps = self.calculate_fps(camera, task)
                     
-                    # Get latest system stats
                     sys_stats = self.get_system_stats()
                     gpu_stats = self.get_gpu_stats()
                     
@@ -664,25 +657,42 @@ class KafkaMonitor:
         print(f"Monitoring topic: {self.kafka_topic}")
         
         try:
-            consumer = KafkaConsumer(
-                self.kafka_topic,
-                bootstrap_servers=[self.kafka_broker],
-                value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-                consumer_timeout_ms=1000
-            )
+            conf = {
+                'bootstrap.servers': self.kafka_broker,
+                'group.id': 'benchmark_monitor',
+                'auto.offset.reset': 'latest',
+                'enable.auto.commit': True,
+                'session.timeout.ms': 6000,
+                'default.topic.config': {'auto.offset.reset': 'latest'}
+            }
+            
+            consumer = Consumer(conf)
+            consumer.subscribe([self.kafka_topic])
             
             print("Connected to Kafka, waiting for messages...")
             
-            for message in consumer:
-                if not self.perf_monitor.running:
-                    break
+            while self.perf_monitor.running:
+                msg = consumer.poll(timeout=1.0)
+                if msg is None:
+                    continue
+                if msg.error():
+                    if msg.error().code() == KafkaError._PARTITION_EOF:
+                        continue
+                    else:
+                        print(f"Consumer error: {msg.error()}")
+                        break
                 
-                self.process_message(message.value)
-                self.message_count += 1
-                
-                # Print status every 100 messages
-                if self.message_count % 100 == 0:
-                    self.print_status()
+                try:
+                    message = json.loads(msg.value().decode('utf-8'))
+                    self.process_message(message)
+                    self.message_count += 1
+                    
+                    if self.message_count % 100 == 0:
+                        self.print_status()
+                except Exception as e:
+                    print(f"Message processing error: {e}")
+                    
+            consumer.close()
                     
         except Exception as e:
             print(f"Kafka monitoring error: {e}")
@@ -690,7 +700,6 @@ class KafkaMonitor:
     def process_message(self, message: Dict) -> None:
         """Process individual Kafka message"""
         try:
-            # Extract camera and task from message
             camera = message.get('tags', {}).get('camera', 'unknown')
             task = message.get('tags', {}).get('task', 'unknown')
             
@@ -710,14 +719,12 @@ class KafkaMonitor:
         print(f"Messages/sec: {msg_per_sec:.1f}")
         print(f"Elapsed time: {elapsed:.1f}s")
         
-        # Print FPS for each camera/task
         for camera_task in self.perf_monitor.fps_counters:
             if '_' in camera_task:
                 camera, task = camera_task.split('_', 1)
                 fps = self.perf_monitor.calculate_fps(camera, task)
                 print(f"  {camera} ({task}): {fps:.1f} FPS")
         
-        # Print system stats
         sys_stats = self.perf_monitor.get_system_stats()
         gpu_stats = self.perf_monitor.get_gpu_stats()
         
@@ -736,19 +743,14 @@ def main():
     
     args = parser.parse_args()
     
-    # Create performance monitor
     perf_monitor = PerformanceMonitor(args.output_dir)
-    
-    # Create Kafka monitor
     kafka_monitor = KafkaMonitor(args.kafka_broker, args.kafka_topic, perf_monitor)
     
-    # Start monitoring in separate thread
     monitor_thread = threading.Thread(target=kafka_monitor.start_monitoring)
     monitor_thread.daemon = True
     monitor_thread.start()
     
     try:
-        # Run for specified duration or until interrupted
         if args.duration > 0:
             time.sleep(args.duration)
         else:

@@ -1368,13 +1368,6 @@
 #!/bin/bash
 set -e
 
-# ============================================
-# Intel Arc A770 DLStreamer Pipeline
-# Simplified & Optimized Version
-# ============================================
-#!/bin/bash
-set -e
-
 # Default values
 CAMERAS=""
 DETECTION_MODEL=""
